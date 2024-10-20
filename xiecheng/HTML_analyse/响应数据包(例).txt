@@ -1,0 +1,244 @@
+{
+            "showType": 1,
+            "card": {
+                "poiId": 18524794,
+                "aBVersion": "H",
+                "isInsertPoi": false,
+                "relativePosition": 5,
+                "businessId": 1677141,
+                "poiName": "阿咪东索景区",
+                "commentCount": 152,
+                "commentScore": 4.2,
+                "isAdvertisement": false,
+                "feedBackId": 0,
+                "isRecommend": false,
+                "districtId": 120123,
+                "districtName": "祁连",
+                "sightLevelStr": "5A",
+                "coverImageUrl": "https://dimg04.c-ctrip.com/images/01032120001ujaaiw6CA2.jpg",
+                "tagNameList": [
+                    "草原采风",
+                    "登高爬山"
+                ],
+                "otherTagList": [
+                    {
+                        "type": "booking",
+                        "name": "随买随用",
+                        "code": "ReadyToUse"
+                    },
+                    {
+                        "type": "booking",
+                        "name": "可订今日",
+                        "code": "TodayCanBook"
+                    },
+                    {
+                        "type": "booking",
+                        "name": "随时退",
+                        "code": "RefundAtAnyTime"
+                    },
+                    {
+                        "type": "active",
+                        "name": "赏秋景",
+                        "code": "sqj2022",
+                        "imageUrl": "",
+                        "tagImageUrl": ""
+                    }
+                ],
+                "poiType": 3,
+                "detailUrl": "https://you.ctrip.com/sight/qilian120123/1677141.html?scene=online",
+                "detailUrlInfo": {
+                    "type": 502,
+                    "originalUrl": "https://you.ctrip.com/sight/qilian120123/1677141.html?scene=online",
+                    "url": "https://you.ctrip.com/sight/qilian120123/1677141.html?scene=online"
+                },
+                "displayField": "祁连",
+                "marketPrice": 54.0,
+                "underlinedPrice": 54.0,
+                "underlineDiscountPrice": 1.0,
+                "preferentialPrice": 1.0,
+                "marketDiscountPrice": 1.0,
+                "preferentialDesc": "已减",
+                "price": 53.0,
+                "priceType": "2",
+                "priceTypeDesc": "门票",
+                "isFree": false,
+                "openStatus": "18:00闭园",
+                "isFromFavor": false,
+                "shortFeatures": [
+                    "欣赏造型各异的石林"
+                ],
+                "sightCategoryInfo": "青海赏秋景点榜 No.4",
+                "hasVideo": false,
+                "isCircuml": false,
+                "coordinate": {
+                    "coordinateType": "BD09",
+                    "latitude": 38.105218,
+                    "longitude": 100.327255
+                },
+                "heatScore": "5.6",
+                "timestamp": 1728726214589
+            }
+        },
+        {
+            "showType": 1,
+            "card": {
+                "poiId": 22866354,
+                "aBVersion": "H",
+                "isInsertPoi": false,
+                "relativePosition": 6,
+                "businessId": 1713861,
+                "poiName": "祁连山草原",
+                "commentCount": 226,
+                "commentScore": 4.6,
+                "isAdvertisement": false,
+                "feedBackId": 0,
+                "isRecommend": false,
+                "districtId": 120123,
+                "districtName": "祁连",
+                "coverImageUrl": "https://dimg04.c-ctrip.com/images/01066120008buzx410671.jpg",
+                "tagNameList": [
+                    "草原采风"
+                ],
+                "poiType": 3,
+                "detailUrl": "https://you.ctrip.com/sight/qilian120123/1713861.html?scene=online",
+                "detailUrlInfo": {
+                    "type": 502,
+                    "originalUrl": "https://you.ctrip.com/sight/qilian120123/1713861.html?scene=online",
+                    "url": "https://you.ctrip.com/sight/qilian120123/1713861.html?scene=online"
+                },
+                "displayField": "祁连",
+                "priceType": "4",
+                "priceTypeDesc": "免费",
+                "isFree": true,
+                "isFromFavor": false,
+                "shortFeatures": [
+                    "观赏草原上的骏马"
+                ],
+                "sightCategoryInfo": "海北必打卡景点榜 No.4",
+                "hasVideo": true,
+                "isCircuml": false,
+                "coordinate": {
+                    "coordinateType": "BD09",
+                    "latitude": 37.969908,
+                    "longitude": 100.949700
+                },
+                "heatScore": "5.6",
+                "timestamp": 1728726214589
+            }
+        },
+        {
+            "showType": 1,
+            "card": {
+                "poiId": 148457633,
+                "aBVersion": "H",
+                "isInsertPoi": false,
+                "relativePosition": 7,
+                "businessId": 148457633,
+                "poiName": "青海湖·黑马河",
+                "commentCount": 3,
+                "commentScore": 4.7,
+                "isAdvertisement": false,
+                "feedBackId": 0,
+                "isRecommend": false,
+                "districtId": 2644,
+                "districtName": "共和",
+                "coverImageUrl": "https://dimg04.c-ctrip.com/images/0102j12000en098rv8F88.jpg",
+                "poiType": 3,
+                "detailUrl": "https://you.ctrip.com/sight/gonghe2644/148457633.html?scene=online",
+                "detailUrlInfo": {
+                    "type": 502,
+                    "originalUrl": "https://you.ctrip.com/sight/gonghe2644/148457633.html?scene=online",
+                    "url": "https://you.ctrip.com/sight/gonghe2644/148457633.html?scene=online"
+                },
+                "displayField": "共和",
+                "priceType": "4",
+                "priceTypeDesc": "免费",
+                "isFree": true,
+                "openStatus": "",
+                "isFromFavor": false,
+                "hasVideo": false,
+                "isCircuml": false,
+                "coordinate": {
+                    "coordinateType": "BD09",
+                    "latitude": 36.748090,
+                    "longitude": 99.799333
+                },
+                "heatScore": "5.6",
+                "timestamp": 1728726214589
+            }
+        },
+        {
+            "showType": 1,
+            "card": {
+                "poiId": 10522850,
+                "aBVersion": "H",
+                "isInsertPoi": false,
+                "relativePosition": 8,
+                "businessId": 146911,
+                "poiName": "拉脊山",
+                "commentCount": 88,
+                "commentScore": 4.7,
+                "isAdvertisement": false,
+                "feedBackId": 0,
+                "isRecommend": false,
+                "districtId": 2636,
+                "districtName": "贵德",
+                "coverImageUrl": "https://dimg04.c-ctrip.com/images/fd/tg/g1/M01/C8/68/CghzflWwvEKAYF59AA_LYswrikw942.jpg",
+                "tagNameList": [
+                    "登高爬山"
+                ],
+                "poiType": 3,
+                "detailUrl": "https://you.ctrip.com/sight/guide2636/146911.html?scene=online",
+                "detailUrlInfo": {
+                    "type": 502,
+                    "originalUrl": "https://you.ctrip.com/sight/guide2636/146911.html?scene=online",
+                    "url": "https://you.ctrip.com/sight/guide2636/146911.html?scene=online"
+                },
+                "displayField": "贵德",
+                "priceType": "4",
+                "priceTypeDesc": "免费",
+                "isFree": true,
+                "isFromFavor": false,
+                "shortFeatures": [
+                    "山上气候类型多样"
+                ],
+                "sightCategoryInfo": "海南藏族自治州必打卡景点榜 No.3",
+                "hasVideo": false,
+                "isCircuml": false,
+                "coordinate": {
+                    "coordinateType": "BD09",
+                    "latitude": 36.327851,
+                    "longitude": 101.557096
+                },
+                "heatScore": "5.6",
+                "timestamp": 1728726214589
+            }
+        }
+
+{
+    "poiId": 18524794,
+    "businessId": 1677141,
+    "districtId": 120123,
+    "poiName": "阿咪东索景区"
+}
+
+{
+    "poiId": 22866354,
+    "businessId": 1713861,
+    "districtId": 120123,
+    "poiName": "祁连山草原"
+}
+
+{
+    "poiId": 148457633,
+    "businessId": 148457633,
+    "districtId": 2644,
+    "poiName": "青海湖·黑马河"
+}
+
+{
+    "poiId": 10522850,
+    "businessId": 146911,
+    "districtId": 2636,
+    "poiName": "拉脊山"
+}
