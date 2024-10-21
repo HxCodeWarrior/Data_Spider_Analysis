@@ -2,7 +2,7 @@
 
 # 欢迎来到本项目的 GitHub 仓库！🎉
 
-这个项目的目标是构建一个 **全自动爬虫系统**，能够高效抓取携程、美团等热门平台上关于 **景点、美食、酒店** 等信息，并运用 **机器学习** 和 **数据分析** 技术进行深度分析。我们通过情感分析、词云、热图等工具，将这些数据转化为用户可以轻松理解的可视化信息，帮助你在旅行决策时做出更明智的选择！
+这个项目的目标是构建一个 **全自动爬虫系统**，能够高效抓取携程、美团等热门平台上对于 **景点、美食、酒店** 等信息，并运用 **机器学习** 和 **数据分析** 技术进行深度分析。我们通过情感分析、词云、热图等工具，将这些数据转化为用户可以轻松理解的可视化信息，帮助你在旅行决策时做出更明智的选择！
 
 ## 🚀 项目功能亮点
 
@@ -61,7 +61,7 @@ git push origin feature/heatmap
 你可以通过 **Pull Request** 提交自己的改进建议，或者通过 **Issue** 提出你的想法。
 
 ```bash
-git clone https://github.com/yourusername/awesome-crawler.git 
+git clone https://github.com/HxCodeWarrior/Data_Spider_Analysis.git 
 cd awesome-crawler
 ```
 
