@@ -41,8 +41,8 @@ git push origin feature/heatmap
 - **Selenium**：用于网页模拟和数据抓取的浏览器自动化工具。
 - **BeautifulSoup**：用于解析网页结构和提取信息。
 - **Pandas** 和 **NumPy**：进行数据处理和分析的基础库。
-- **深度学习框架** 🏗️: PyTorch
-- **自然语言处理** 🗣️: Hugging Face Transformers
+- **PyTorch** 🏗️: 深度学习框架
+- **Hugging Face Transformers** 🗣️: 自然语言处理
 - **scikit-learn**：情感分析和机器学习模型训练。
 - **Matplotlib** 和 **Seaborn**：可视化评论、热度和地理分布。
 - **GeoPandas**：基于地理位置进行距离和热图分析。
