@@ -7,10 +7,14 @@ from sentiment_analysis_package.module.visualization import plot_sentiment_distr
 
 def main():
     # 设置BERT模型本地路径
-    auto_model_path = '/home/hx/Objects/Data_Spider_Analysis/bert-base-chinese'
+    auto_model_path = '../Data_Spider_Analysis/bert-base-chinese'
     # 设置数据路径和旅游景点名称
-    origin_data_path = '/home/hx/Objects/Data_Spider_Analysis/xiecheng/data'  # 数据路径
+    origin_data_path = '../Data_Spider_Analysis/xiecheng/data'  # 数据路径
     tourist_name = '茶卡盐湖'  # 旅游景点名称
+    # 设置可视化图片保存位置
+    visualization_path = '../Data_Analyse/Analysis_Pictures_Result'
+    # 设置训练模型保存位置
+    model_save_path = '../Data_Analyse/models'
 
     # Step 1: 加载数据
     print("Loading data...")
@@ -38,7 +42,7 @@ def main():
     trained_model = train_model(model, dataloader, epochs=4, learning_rate=3e-5, weight_decay=0.01)
 
     # Step 6: 保存模型
-    trained_model.save_pretrained('/home/hx/Objects/Data_Spider_Analysis/Data_Analyse/models')
+    trained_model.save_pretrained(model_save_path)
 
     # Step 7: 模型预测
     print("Making predictions...")
@@ -57,7 +61,7 @@ def main():
 
     # Step 9: 可视化结果
     print("Visualizing results...")
-    plot_sentiment_distribution(all_predictions, all_labels)
+    plot_sentiment_distribution(all_predictions, all_labels, visualization_path)
 
 
 if __name__ == "__main__":
