@@ -1,3 +1,4 @@
+import os
 from sentiment_analysis_package.module.data_loader import load_data
 from sentiment_analysis_package.module.data_processing import tokenize_reviews
 from sentiment_analysis_package.module.model_training import prepare_model, train_model, prepare_dataloader
@@ -7,9 +8,9 @@ from sentiment_analysis_package.module.visualization import plot_sentiment_distr
 
 def main():
     # 设置BERT模型本地路径
-    auto_model_path = '../Data_Spider_Analysis/bert-base-chinese'
+    auto_model_path = '../bert-base-chinese'
     # 设置数据路径和旅游景点名称
-    origin_data_path = '../Data_Spider_Analysis/xiecheng/data'  # 数据路径
+    origin_data_path = '../xiecheng/data'  # 数据路径
     tourist_name = '茶卡盐湖'  # 旅游景点名称
     # 设置可视化图片保存位置
     visualization_path = '../Data_Analyse/Analysis_Pictures_Result'
@@ -39,12 +40,9 @@ def main():
 
     # Step 5: 训练模型
     print("Training model...")
-    trained_model = train_model(model, dataloader, epochs=4, learning_rate=3e-5, weight_decay=0.01)
+    trained_model = train_model(model, dataloader, epochs=4, learning_rate=3e-5, weight_decay=0.01, save_path=model_save_path)
 
-    # Step 6: 保存模型
-    trained_model.save_pretrained(model_save_path)
-
-    # Step 7: 模型预测
+    # Step 6: 模型预测
     print("Making predictions...")
     predictions_positive = predict_sentiment(trained_model, positive_inputs)
     predictions_after_consumption = predict_sentiment(trained_model, after_consumption_inputs)
@@ -55,14 +53,15 @@ def main():
     all_labels = [2] * len(positive_inputs['input_ids']) + [1] * len(after_consumption_inputs['input_ids']) + [0] * len(
         negative_inputs['input_ids'])
 
-    # Step 8: 评估模型表现
+    # Step 7: 评估模型表现
     print("Evaluating model...")
     evaluate_model(all_predictions, all_labels)
 
-    # Step 9: 可视化结果
+    # Step 8: 可视化结果
     print("Visualizing results...")
     plot_sentiment_distribution(all_predictions, all_labels, visualization_path)
 
 
 if __name__ == "__main__":
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
     main()
