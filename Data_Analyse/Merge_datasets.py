@@ -1,57 +1,66 @@
-# Time: 2024/10/23 20：16
-# *Author: <HxCodeWarrior>
-# File: Merge_datasets.py
-# env: Python 3.11
-# encoding: utf-8
-# tool: PyCharm
 import pandas as pd
 import os
-
-# 景点数据所在的根目录
-root_dir = '../xiecheng/data'
 
 # 结果保存的目录
 output_dir = '../Data_Analyse/Datasets'
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
+# 读取景点数据并移除不需要的列
+attractions_df = pd.read_csv('../xiecheng/data/tourist_attraction_data.csv')
+attractions_df = attractions_df.drop(columns=['comments_total', 'positive_comments', 'after_consumption_comments', 'negative_comments'])
 
-# 初始化三个空的DataFrame，分别用于存储好评、中评和差评数据
-positive_reviews = pd.DataFrame()
-neutral_reviews = pd.DataFrame()
-negative_reviews = pd.DataFrame()
+# 用户指定的根目录路径
+root_dir = input("请输入景点目录的根目录路径：")
 
-# 遍历根目录下的所有景点数据目录
-for dir_name, subdir_list, file_list in os.walk(root_dir):
-    for file_name in file_list:
-        # 根据文件名模式判断是属于好评、中评还是差评
-        if '好评' in file_name:
-            reviews_type = 'positive'
-        elif '差评' in file_name:
-            reviews_type = 'negative'
-        else:
-            # 假设其他情况为中评
-            reviews_type = 'after_consumption'
+# 检查根目录是否存在
+if not os.path.exists(root_dir):
+    print("指定的根目录不存在，请检查路径。")
+else:
+    # 获取景点目录列表
+    attraction_dirs = [os.path.join(root_dir, d) for d in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, d))]
+    print("景点目录列表:", attraction_dirs)  # 打印目录列表以检查
 
-        # 构建完整的文件路径
-        file_path = os.path.join(dir_name, file_name)
+    # 初始化三个空的DataFrame，用于存储合并后的好评、消费后评价和差评数据
+    positive_comments_df = pd.DataFrame()
+    after_consumption_comments_df = pd.DataFrame()
+    negative_comments_df = pd.DataFrame()
 
-        # 读取CSV文件
-        try:
-            reviews_data = pd.read_csv(file_path)
-            # 根据评论类型，将数据添加到对应的DataFrame中
-            if reviews_type == 'positive':
-                positive_reviews = pd.concat([positive_reviews, reviews_data], ignore_index=True)
-            elif reviews_type == 'after_consumption':
-                neutral_reviews = pd.concat([neutral_reviews, reviews_data], ignore_index=True)
-            elif reviews_type == 'negative':
-                negative_reviews = pd.concat([negative_reviews, reviews_data], ignore_index=True)
-        except pd.errors.EmptyDataError:
-            print(f"Skipping empty file: {file_name}")
-        except Exception as e:
-            print(f"Error reading {file_name}: {e}")
+    # 遍历每个景点目录
+    for dir_name in attraction_dirs:
+        attraction_name = os.path.basename(dir_name)  # 获取景点名称
+        print(f"处理景点: {attraction_name}")  # 打印正在处理的景点名称
+        positive_path = os.path.join(dir_name, f'{attraction_name}_好评.csv')
+        after_consumption_path = os.path.join(dir_name, f'{attraction_name}_消费后评价.csv')
+        negative_path = os.path.join(dir_name, f'{attraction_name}_差评.csv')
 
-# 将合并后的数据保存为CSV文件到指定的输出目录
-positive_reviews.to_csv(os.path.join(output_dir, 'positive_reviews.csv'), index=False)
-neutral_reviews.to_csv(os.path.join(output_dir, 'after_consumption_reviews.csv'), index=False)
-negative_reviews.to_csv(os.path.join(output_dir, 'negative_reviews.csv'), index=False)
+        # 读取好评数据
+        if os.path.exists(positive_path):
+            positive_comments = pd.read_csv(positive_path)
+            print(f"读取到 {len(positive_comments)} 条好评数据")  # 打印读取到的数据行数
+            positive_comments['attraction_name'] = attraction_name
+            positive_comments_df = pd.concat([positive_comments_df, positive_comments])
+
+        # 读取消费后评价数据
+        if os.path.exists(after_consumption_path):
+            after_consumption_comments = pd.read_csv(after_consumption_path)
+            print(f"读取到 {len(after_consumption_comments)} 条消费后评价数据")  # 打印读取到的数据行数
+            after_consumption_comments['attraction_name'] = attraction_name
+            after_consumption_comments_df = pd.concat([after_consumption_comments_df, after_consumption_comments])
+
+        # 读取差评数据
+        if os.path.exists(negative_path):
+            negative_comments = pd.read_csv(negative_path)
+            print(f"读取到 {len(negative_comments)} 条差评数据")  # 打印读取到的数据行数
+            negative_comments['attraction_name'] = attraction_name
+            negative_comments_df = pd.concat([negative_comments_df, negative_comments])
+
+    # 检查合并后的数据
+    print("合并后的好评数据行数:", len(positive_comments_df))
+    print("合并后的消费后评价数据行数:", len(after_consumption_comments_df))
+    print("合并后的差评数据行数:", len(negative_comments_df))
+
+    # 保存合并后的数据
+    positive_comments_df.to_csv(os.path.join(output_dir, 'merged_positive_reviews.csv'), index=False)
+    after_consumption_comments_df.to_csv(os.path.join(output_dir, 'merged_after_consumption_reviews.csv'), index=False)
+    negative_comments_df.to_csv(os.path.join(output_dir, 'merged_negative_reviews.csv'), index=False)
