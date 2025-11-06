@@ -1,4 +1,3 @@
-/chromedriver-linux64/
-/bert-base-chinese/
-/.idea/
-/xiecheng/data/
+/models/
+/Datasets/
+*/__pycache__/*
