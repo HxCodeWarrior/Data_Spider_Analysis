@@ -1,1 +1,0 @@
-from .browser_initializer import BrowserInitializer
