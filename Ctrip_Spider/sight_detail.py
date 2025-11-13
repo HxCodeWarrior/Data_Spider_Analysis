@@ -10,29 +10,19 @@ class AttractionDetailFetcher:
     用于获取指定景点的详细信息，包括游玩时间、开放时间、描述和优待政策等
     """
     
-    def __init__(self):
+    def __init__(self, log_level: str = 'INFO'):
         """初始化景点详情获取器"""
         self.detail_url = 'https://m.ctrip.com/restapi/soa2/18254/json/getPoiMoreDetail'
         
-        # 请求数据模板
-        self.detail_data = {
-            "poiId": 0, # 景点ID，需要在调用时设置
-            "scene": "basic",
-            "head": {
-                "cid": "09031065211914680477",
-                "ctok": "",
-                "cver": "1.0",
-                "lang": "01",
-                "sid": "8888",
-                "syscode": "09",
-                "auth": "",
-                "xsid": "",
-                "extension": []
-            }
-        }
-        
         # 设置日志
-        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+        self._setup_logging(log_level)
+    
+    def _setup_logging(self, log_level: str):
+        """设置日志配置"""
+        logging.basicConfig(
+            level=getattr(logging, log_level.upper()),
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
         self.logger = logging.getLogger(__name__)
 
     def get_detail(self, poi_id):
@@ -54,8 +44,7 @@ class AttractionDetailFetcher:
                 }
         """
         # 准备请求数据
-        request_data = self.detail_data.copy()
-        request_data['poiId'] = poi_id
+        request_data = self._build_request_data(poi_id)
         
         try:
             # 发送请求
@@ -121,6 +110,23 @@ class AttractionDetailFetcher:
                 'preferential_policies': {},
                 'error_message': error_msg
             }
+
+    def _build_request_data(self, poi_id: int) -> dict:
+        """构建请求数据"""
+        return {"poiId": poi_id, # 景点ID
+            "scene": "basic",
+            "head": {
+                "cid": "09031065211914680477",
+                "ctok": "",
+                "cver": "1.0",
+                "lang": "01",
+                "sid": "8888",
+                "syscode": "09",
+                "auth": "",
+                "xsid": "",
+                "extension": []
+            }
+        }
 
     def _parse_detail_data(self, response_json):
         """
