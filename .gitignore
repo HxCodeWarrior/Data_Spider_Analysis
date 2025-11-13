@@ -1,3 +1,7 @@
-/models/
-/Datasets/
-*/__pycache__/*
+models/
+Datasets/
+logs/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
