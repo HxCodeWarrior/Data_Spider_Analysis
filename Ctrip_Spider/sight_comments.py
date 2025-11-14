@@ -11,7 +11,7 @@ from log import CtripSpiderLogger
 class CtripCommentSpider:
     """携程景点评论爬虫类，用于爬取携程网上的景点评论数据"""
 
-    def __init__(self, output_dir: str = './景点评论数据', logger: CtripSpiderLogger = None):
+    def __init__(self, output_dir: str = './Datasets', logger: CtripSpiderLogger = None):
         """
         初始化爬虫
 
@@ -55,7 +55,7 @@ class CtripCommentSpider:
                 writer.writerow([
                     '序号', '景区ID', '景区名称', '评论ID', '用户昵称', 
                     '总体评分', '评论内容', '发布时间', '有用数', '回复数',
-                    '出行类型', '用户所在地', '游玩时长', '图片数量',
+                    '出行类型', '用户所在地', '游玩时长', '图片数量', '图片链接列表',
                     '景色评分', '趣味评分', '性价比评分', '推荐项目'
                 ])
             self.logger.info(f"CSV文件已初始化: {file_path}")
@@ -124,6 +124,25 @@ class CtripCommentSpider:
             elif score_item.get('name') == '性价比':
                 value_score = score_item.get('score', '')
         return scenery_score, fun_score, value_score
+    
+    def _extract_image_urls(self, images):
+        """提取图片链接列表
+
+        Args:
+            images: 图片列表
+
+        Returns:
+            list: 图片链接列表
+        """
+        if not images or not isinstance(images, list):
+            return []
+        
+        image_urls = []
+        for image in images:
+            if isinstance(image, dict) and 'imageSrcUrl' in image:
+                image_urls.append(image['imageSrcUrl'])
+        
+        return image_urls
     
     def crawl_comments(self, poi_id: str, poi_name: str, max_pages: int = 100) -> bool:
         """爬取指定景点的评论，返回是否成功
@@ -361,6 +380,11 @@ class CtripCommentSpider:
                 images = item.get('images', [])
                 if not images or not isinstance(images, list):
                     images = []
+                
+                # 提取图片链接列表
+                image_urls = self._extract_image_urls(images)
+                # 将图片链接列表转换为字符串，用分号分隔
+                image_urls_str = ';'.join(image_urls) if image_urls else ''
 
                 # 提取关键信息
                 comment_data = {
@@ -375,6 +399,7 @@ class CtripCommentSpider:
                     'ipLocatedName': item.get('ipLocatedName', ''),
                     'timeDuration': item.get('timeDuration', ''),
                     'imageCount': len(images),
+                    'imageUrls': image_urls_str, 
                     'sceneryScore': scenery_score,
                     'funScore': fun_score,
                     'valueScore': value_score,
@@ -421,6 +446,7 @@ class CtripCommentSpider:
                         comment['ipLocatedName'],
                         comment['timeDuration'],
                         comment['imageCount'],
+                        comment['imageUrls'],
                         comment['sceneryScore'],
                         comment['funScore'],
                         comment['valueScore'],
