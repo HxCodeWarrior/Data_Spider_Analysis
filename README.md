@@ -1,4 +1,4 @@
-# Data_Spider_Analysis
+# LifeLens
 
 # 欢迎来到本项目的 GitHub 仓库！🎉
 
@@ -61,8 +61,7 @@ git push origin feature/heatmap
 你可以通过 **Pull Request** 提交自己的改进建议，或者通过 **Issue** 提出你的想法。
 
 ```bash
-git clone https://github.com/HxCodeWarrior/Data_Spider_Analysis.git 
-cd awesome-crawler
+git clone https://github.com/Hsuant/LifeLens.git 
 ```
 
 一起来让这个项目变得更好吧！🌟
