@@ -4,12 +4,12 @@ from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
 
-class CtripSpiderLogger:
+class SpiderLogger:
     """
-    携程爬虫日志类，用于收集和管理爬虫运行时的日志信息
+    爬虫日志类，用于收集和管理爬虫运行时的日志信息
     """
     
-    def __init__(self, name="CtripSpider", log_dir="logs", level=logging.INFO):
+    def __init__(self, name="Spider", log_dir="logs", level=logging.INFO):
         """
         初始化日志类
         

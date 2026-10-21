@@ -1,14 +1,15 @@
 import random
 import time
-from typing import List
-from log import CtripSpiderLogger
+from typing import List, Optional
+from lifelens.core.logger import SpiderLogger
 
 
 class RequestOptimizer:
-    def __init__(self, delay_range: tuple = (1, 3), proxies: List[str] = None, logger: CtripSpiderLogger = None):
+    def __init__(self, delay_range: tuple = (1, 3), proxies: Optional[List[str]] = None,
+                 logger: Optional[SpiderLogger] = None):
         self.delay_range = delay_range
         self.proxies = proxies if proxies is not None else []
-        self.logger = logger or CtripSpiderLogger("RequestOptimizer", "logs")
+        self.logger = logger or SpiderLogger("RequestOptimizer", "logs")
         self.request_count = 0
 
     def set_delay(self):
@@ -37,8 +38,8 @@ class RequestOptimizer:
 
 # 示例用法
 if __name__ == "__main__":
-    # 初始化 CtripSpiderLogger
-    spider_logger = CtripSpiderLogger("RequestOptimizerTest", "logs")
+    # 初始化 SpiderLogger
+    spider_logger = SpiderLogger("RequestOptimizerTest", "logs")
     # 初始化 RequestOptimizer，设置延迟范围和代理列表
     proxies_list = [
         "http://proxy1.com:8080",
