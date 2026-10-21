@@ -1,22 +1,27 @@
 import json
-import os
+import re
+import time
 from requests import post
 from bs4 import BeautifulSoup
-from log import CtripSpiderLogger
+from lifelens.core.logger import SpiderLogger
+from lifelens.core.request_optimizer import RequestOptimizer
+from lifelens.config import ctrip_config
 
 class AttractionDetailFetcher:
     """景点详情获取器，用于获取指定景点的核心信息"""
 
-    def __init__(self, logger: CtripSpiderLogger = None):
+    def __init__(self, logger: SpiderLogger = None, request_optimizer: RequestOptimizer = None):
         """初始化景点详情获取器
 
         Args:
             logger: 日志记录器实例
+            request_optimizer: 请求优化器实例
         """
-        self.detail_url = 'https://m.ctrip.com/restapi/soa2/18254/json/getPoiMoreDetail'
+        self.detail_url = ctrip_config.sight_detail_url
 
         # 初始化日志记录器
-        self.logger = logger or CtripSpiderLogger("AttractionDetailFetcher", "logs")
+        self.logger = logger or SpiderLogger("AttractionDetailFetcher", "logs")
+        self.request_optimizer = request_optimizer or RequestOptimizer(logger=self.logger)
 
     def get_detail(self, poi_id):
         """获取景点核心信息
@@ -44,11 +49,26 @@ class AttractionDetailFetcher:
         request_data = self._build_request_data(poi_id)
         self.logger.info(f"开始获取景点详情, poi_id: {poi_id}")
 
+        # 随机延迟
+        self.request_optimizer.set_delay()
+
         try:
-            # 发送请求
-            import time
             start_time = time.time()
-            response = post(self.detail_url, json=request_data)
+            # 发送请求
+            # 带重试的请求
+            response = None
+            for attempt in range(1, 4):
+                try:
+                    response = post(self.detail_url, json=request_data, timeout=10)
+                    if response.status_code == 200:
+                        break
+                    self.logger.warning(f"HTTP {response.status_code}, retry {attempt}/3")
+                except Exception as e:
+                    self.logger.log_error(f"请求异常: {e}", self.detail_url, "POST")
+                if attempt < 3:
+                    time.sleep(2 * attempt)
+            if response is None:
+                return self._create_error_result("3次重试均失败")
             end_time = time.time()
             response_time = end_time - start_time
 
@@ -123,17 +143,7 @@ class AttractionDetailFetcher:
         return {
             "poiId": poi_id,
             "scene": "basic",
-            "head": {
-                "cid": "09031065211914680477",
-                "ctok": "",
-                "cver": "1.0",
-                "lang": "01",
-                "sid": "8888",
-                "syscode": "09",
-                "auth": "",
-                "xsid": "",
-                "extension": []
-            }
+            "head": dict(ctrip_config.head)
         }
 
     def _parse_core_data(self, response_json):
@@ -225,7 +235,6 @@ class AttractionDetailFetcher:
                 # 提取数字部分
                 if ticket_desc:
                     # 使用正则表达式提取数字（包括小数）
-                    import re
                     numbers = re.findall(r'\d+(?:\.\d+)?', ticket_desc)
                     if numbers:
                         # 如果有多个数字，取第一个（通常是价格）
@@ -265,7 +274,6 @@ class AttractionDetailFetcher:
                         # 如果BeautifulSoup处理失败，尝试简单的字符串替换
                         self.logger.warning(f"HTML解析失败，使用备用方法: {e}")
                         # 使用正则表达式移除HTML标签
-                        import re
                         clean_text = re.sub(r'<[^>]+>', '', description)
                         clean_text = ' '.join(clean_text.split())
                         result['description'] = clean_text.strip()
@@ -357,7 +365,7 @@ class AttractionDetailFetcher:
 # 使用示例
 if __name__ == "__main__":
     # 创建日志记录器
-    logger = CtripSpiderLogger("AttractionDetailFetcherMain", "logs")
+    logger = SpiderLogger("AttractionDetailFetcherMain", "logs")
     # 创建景点详情获取器实例
     detail_fetcher = AttractionDetailFetcher(logger=logger)
     

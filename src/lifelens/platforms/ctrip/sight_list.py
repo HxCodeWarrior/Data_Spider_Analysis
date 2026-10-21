@@ -2,22 +2,28 @@ import requests
 import json
 import time
 import os
+import traceback
 from typing import List, Dict, Optional
-from log import CtripSpiderLogger
+from lifelens.core.logger import SpiderLogger
+from lifelens.core.request_optimizer import RequestOptimizer
+from lifelens.config import ctrip_config
 
 class CtripAttractionScraper:
     """携程景点数据爬取器，用于获取指定地区的景点信息"""
 
-    def __init__(self, timeout: int = 10, logger: CtripSpiderLogger = None):
+    def __init__(self, timeout: int = 10, logger: SpiderLogger = None,
+                 request_optimizer: RequestOptimizer = None):
         """初始化爬虫
 
         Args:
             timeout: 请求超时时间，默认为10秒
             logger: 日志记录器实例
+            request_optimizer: 请求优化器实例
         """
-        self.url = 'https://m.ctrip.com/restapi/soa2/13342/json/getSightRecreationList'
+        self.url = ctrip_config.sight_list_url
         self.timeout = timeout
-        self.logger = logger or CtripSpiderLogger("CtripAttractionScraper", "logs")
+        self.logger = logger or SpiderLogger("CtripAttractionScraper", "logs")
+        self.request_optimizer = request_optimizer or RequestOptimizer(logger=self.logger)
     
     def get_attractions_list(self, district_id: int, page: int = 1, count: int = 20) -> List[Dict]:
         """获取某个地区的景点列表
@@ -33,15 +39,30 @@ class CtripAttractionScraper:
         self.logger.info(f"开始获取地区 {district_id} 的景点列表，第 {page} 页")
         data = self._build_request_data(district_id, page, count)
 
+        # 随机延迟
+        self.request_optimizer.set_delay()
+
         try:
             start_time = time.time()
-            response = requests.post(self.url, json=data, timeout=self.timeout)
+            # 带退避重试的请求
+            response = None
+            for attempt in range(1, 4):
+                try:
+                    response = requests.post(self.url, json=data, timeout=self.timeout)
+                    if response.status_code == 200:
+                        break
+                    self.logger.warning(f"HTTP {response.status_code}, retry {attempt}/3")
+                except Exception as e:
+                    self.logger.log_error(f"请求异常: {e}", self.url, "POST")
+                if attempt < 3:
+                    time.sleep(2 * attempt)
+
+            if response is None or response.status_code != 200:
+                self.logger.log_error("3次重试均失败", self.url, "POST")
+                return []
+
             end_time = time.time()
             response_time = end_time - start_time
-
-            if response.status_code != 200:
-                self.logger.log_error(f"请求失败，状态码: {response.status_code}", self.url, "POST")
-                return []
 
             self.logger.log_request(self.url, response.status_code, response_time, "POST")
             response_json = response.json()
@@ -114,17 +135,7 @@ class CtripAttractionScraper:
             'hiderank': '',
             'isLibertinism': False,
             'hideTop': False,
-            'head': {
-                'cid': '09031065211914680477',
-                'ctok': '',
-                'cver': '1.0',
-                'lang': '01',
-                'sid': '8888',
-                'syscode': '09',
-                'auth': '',
-                'xsid': '',
-                'extension': []
-            }
+            'head': dict(ctrip_config.head)
         }
 
     def _parse_poi_basic_info(self, poi: Dict) -> Optional[Dict]:
@@ -142,8 +153,10 @@ class CtripAttractionScraper:
                 'english_name': poi.get('eName', ''),
                 'id': poi.get('id', ''),
                 'poi_id': poi.get('poiId', ''),
-                'longitude': poi.get('coordInfo', {}).get('gDLat', ''),  # 经度
-                'latitude': poi.get('coordInfo', {}).get('gDLon', ''),   # 纬度
+                # NOTE: gDLat = latitude, gDLon = longitude (携程字段命名与地理惯例相反)
+                # 修正: longitude 取 gDLon, latitude 取 gDLat
+                'longitude': poi.get('coordInfo', {}).get('gDLon', ''),  # 经度
+                'latitude': poi.get('coordInfo', {}).get('gDLat', ''),   # 纬度
                 'tags': list(set(poi.get('resourceTags', []) + 
                                poi.get('tagNameList', []) + 
                                poi.get('themeTags', []))),
@@ -197,6 +210,9 @@ class CtripAttractionScraper:
             all_attractions.extend(attractions)
             # 记录进度
             self.logger.log_progress(page, pages, "attraction list crawling")
+            # 分页间随机延迟
+            if page < pages:
+                self.request_optimizer.set_delay()
 
         end_time = time.time()
         self.logger.info(f"总共获取到{len(all_attractions)}个景点，耗时: {end_time-start_time:.2f}秒")
@@ -236,6 +252,10 @@ class CtripAttractionScraper:
             filename: 保存的文件名
         """
         try:
+            # 确保目录存在
+            dir_name = os.path.dirname(filename)
+            if dir_name:
+                os.makedirs(dir_name, exist_ok=True)
             with open(filename, 'w', encoding='utf-8') as f:
                 json.dump(attractions, f, ensure_ascii=False, indent=2)
             self.logger.info(f"数据已保存到 {filename}，共 {len(attractions)} 条记录")
@@ -247,7 +267,7 @@ class CtripAttractionScraper:
 # 使用示例
 if __name__ == '__main__':
     # 创建日志记录器
-    logger = CtripSpiderLogger("CtripAttractionScraperMain", "logs")
+    logger = SpiderLogger("CtripAttractionScraperMain", "logs")
     # 创建爬虫实例
     scraper = CtripAttractionScraper(timeout=10, logger=logger)
     

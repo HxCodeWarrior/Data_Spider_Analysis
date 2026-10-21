@@ -4,37 +4,86 @@ import csv
 import time
 import os
 import re
+import traceback
 from datetime import datetime
-from log import CtripSpiderLogger
+from lifelens.core.logger import SpiderLogger
+from lifelens.core.request_optimizer import RequestOptimizer
+from lifelens.config import ctrip_config
 
 
 class CtripCommentSpider:
     """携程景点评论爬虫类，用于爬取携程网上的景点评论数据"""
 
-    def __init__(self, output_dir: str = './Datasets', logger: CtripSpiderLogger = None):
+    def __init__(self, output_dir: str = './Datasets', logger: SpiderLogger = None,
+                 request_optimizer: RequestOptimizer = None):
         """
         初始化爬虫
 
         Args:
             output_dir: 输出目录路径
             logger: 日志记录器实例
+            request_optimizer: 请求优化器实例
         """
         self.output_dir = output_dir
         # 创建输出目录
         os.makedirs(self.output_dir, exist_ok=True)
 
         # 请求配置
-        self.post_url = "https://m.ctrip.com/restapi/soa2/13444/json/getCommentCollapseList"
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Content-Type': 'application/json',
-            'Referer': 'https://m.ctrip.com/',
-            'Origin': 'https://m.ctrip.com'
-        }
+        self.post_url = ctrip_config.comment_url
+        # 评论接口需要携带 cookie 才能通过风控，使用会话并惰性预热首页以获取 cookie。
+        self._session = None
 
         # 初始化日志记录器
-        self.logger = logger or CtripSpiderLogger("CtripCommentSpider", "logs")
+        self.logger = logger or SpiderLogger("CtripCommentSpider", "logs")
+        self.request_optimizer = request_optimizer or RequestOptimizer(logger=self.logger)
+        # 断点续爬文件路径
+        self.checkpoint_file = os.path.join(self.output_dir, 'progress.json')
+        # 失败页面记录文件路径
+        self.failed_pages_file = os.path.join(self.output_dir, 'failed_pages.json')
     
+    def _load_checkpoint(self) -> dict:
+        """加载断点续爬进度文件
+
+        Returns:
+            dict: 进度字典 {poi_id: {last_page, total_pages, status}}
+        """
+        if os.path.exists(self.checkpoint_file):
+            try:
+                with open(self.checkpoint_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, IOError):
+                pass
+        return {}
+
+    def _save_checkpoint(self, checkpoint: dict):
+        """保存断点续爬进度文件"""
+        try:
+            with open(self.checkpoint_file, 'w', encoding='utf-8') as f:
+                json.dump(checkpoint, f, ensure_ascii=False, indent=2)
+        except IOError as e:
+            self.logger.error(f"保存断点文件失败: {e}")
+
+    def _record_failed_page(self, poi_id: str, page: int, error: str):
+        """记录失败页面到 failed_pages.json"""
+        failed = []
+        if os.path.exists(self.failed_pages_file):
+            try:
+                with open(self.failed_pages_file, 'r', encoding='utf-8') as f:
+                    failed = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                pass
+        failed.append({
+            'poi_id': poi_id,
+            'page': page,
+            'error': error,
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        })
+        try:
+            with open(self.failed_pages_file, 'w', encoding='utf-8') as f:
+                json.dump(failed, f, ensure_ascii=False, indent=2)
+        except IOError as e:
+            self.logger.error(f"保存失败页面记录失败: {e}")
+
     def _init_csv_file(self, poi_id: str, poi_name: str):
         """初始化CSV文件，写入表头
 
@@ -98,7 +147,7 @@ class CtripCommentSpider:
             timestamp = int(time_str.split('(')[1].split('+')[0])
             # 转换为可读时间
             return datetime.fromtimestamp(timestamp/1000).strftime('%Y-%m-%d %H:%M:%S')
-        except:
+        except Exception:
             return time_str
 
     def _parse_scores(self, scores):
@@ -155,48 +204,77 @@ class CtripCommentSpider:
         Returns:
             bool: 爬取是否成功
         """
+        poi_id = str(poi_id)
         self.logger.info(f"开始爬取景点: {poi_name} (ID: {poi_id})")
         start_time = time.time()
 
-        # 为每个景点创建独立的CSV文件
-        file_path = self._init_csv_file(poi_id, poi_name)
-        if not file_path:
-            self.logger.error(f"无法为景点 {poi_name} 创建文件")
-            return False
+        # 断点续爬：检查是否已完成
+        checkpoint = self._load_checkpoint()
+        poi_checkpoint = checkpoint.get(poi_id, {})
+        if poi_checkpoint.get('status') == 'completed':
+            self.logger.info(f"景点 {poi_name} (ID: {poi_id}) 已完成爬取，跳过")
+            return True
 
         # 获取总页数
         total_pages = self._get_total_pages(poi_id)
         if total_pages == 0:
+            self._record_failed_page(poi_id, 0, "无法获取评论总页数")
             self.logger.warning(f"无法获取 {poi_name} 的评论页数")
             return False
-
         total_pages = min(total_pages, max_pages)
-        self.logger.info(f"计划爬取 {total_pages} 页评论")
 
-        # 爬取所有页面的评论
-        current_index = 0
-        success_count = 0  # 记录成功爬取的页面数
+        # 断点续爬：确定起始页和已有数据量
+        start_page = poi_checkpoint.get('last_page', 0) + 1
+        current_index = poi_checkpoint.get('current_index', 0)
+        if start_page > 1:
+            self.logger.info(f"断点续爬: 从第 {start_page} 页开始，已有 {current_index} 条评论")
+            # 续爬时以追加模式打开已有文件
+            safe_name = "".join(c for c in poi_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            file_path = os.path.join(self.output_dir, f'{poi_id}_{safe_name}.csv')
+            if not os.path.exists(file_path):
+                self.logger.warning(f"断点续爬: CSV文件不存在，从头开始")
+                file_path = self._init_csv_file(poi_id, poi_name)
+                start_page = 1
+                current_index = 0
+        else:
+            # 新建CSV文件
+            file_path = self._init_csv_file(poi_id, poi_name)
+            if not file_path:
+                self.logger.error(f"无法为景点 {poi_name} 创建文件")
+                return False
+        self.logger.info(f"计划爬取第 {start_page}-{total_pages} 页评论")
 
-        for page in range(1, total_pages + 1):
+        success_count = 0
+        for page in range(start_page, total_pages + 1):
             self.logger.info(f"正在爬取第 {page}/{total_pages} 页...")
 
             # 获取当前页数据
             comments_data = self._get_page_comments(poi_id, page)
             if not comments_data:
                 self.logger.warning(f"第 {page} 页数据获取失败，跳过")
+                self._record_failed_page(poi_id, page, "数据获取失败")
                 continue
 
             # 保存评论到该景点对应的文件
             current_index = self._save_comments(comments_data, poi_id, poi_name, current_index, file_path)
             self.logger.info(f"第 {page} 页爬取完成，获取 {len(comments_data)} 条评论")
-            success_count += 1  # 成功爬取一页
+            success_count += 1
 
             # 记录进度
             self.logger.log_progress(page, total_pages, "comment crawling")
 
-            # 延迟
+            # 更新断点
+            checkpoint[poi_id] = {
+                'last_page': page,
+                'total_pages': total_pages,
+                'current_index': current_index,
+                'status': 'completed' if page >= total_pages else 'in_progress'
+            }
+            self._save_checkpoint(checkpoint)
+
+            # 随机延迟
             if page < total_pages:
-                time.sleep(1)
+                self.request_optimizer.set_delay()
 
         end_time = time.time()
         self.logger.info(f"景点 {poi_name} 爬取完成，总耗时: {end_time-start_time:.2f}秒，共获取 {current_index} 条评论，保存至: {file_path}")
@@ -229,7 +307,7 @@ class CtripCommentSpider:
             self.logger.log_progress(i, total_pois, "POI crawling")
 
             # 景点间的延迟
-            time.sleep(2)
+            self.request_optimizer.set_delay()
 
         end_time = time.time()
         # 打印汇总结果
@@ -261,25 +339,11 @@ class CtripCommentSpider:
 
         try:
             total_count = data['result']['totalCount']
-            total_pages = int(total_count / 10)
+            total_pages = (int(total_count) + 9) // 10
             self.logger.info(f"总评论数: {total_count}, 总页数: {total_pages}")
             return total_pages
         except (KeyError, TypeError) as e:
             self.logger.error(f"解析总页数时出错: {e}")
-            return 0
-
-    def _get_current_index(self) -> int:
-        """获取当前CSV文件中的序号
-
-        Returns:
-            int: 当前序号
-        """
-        try:
-            with open(self.output_file, 'r', encoding='utf-8-sig') as f:
-                reader = csv.reader(f)
-                rows = list(reader)
-                return len(rows) - 1
-        except:
             return 0
 
     def _make_request(self, poi_id: str, page_index: int = 1):
@@ -299,45 +363,64 @@ class CtripCommentSpider:
                     "collapseType": 0,
                     "commentTagId": 0,
                     "pageIndex": page_index,
-                    "pageSize": 10,
+                    "pageSize": ctrip_config.comment_page_size,
                     "poiId": poi_id,
                     "sourceType": 1,
                     "sortType": 3,
                     "starType": 0
                 },
-                "head": {
-                    "cid": "09031069112760102754",
-                    "ctok": "",
-                    "cver": "1.0",
-                    "lang": "01",
-                    "sid": "8888",
-                    "syscode": "09",
-                    "auth": "",
-                    "xsid": "",
-                    "extension": []
-                }
+                "head": {**ctrip_config.head, "cid": ctrip_config.comment_cid}
             }
 
             start_time = time.time()
-            response = requests.post(
-                self.post_url, 
-                data=json.dumps(request_data), 
-                headers=self.headers, 
-                timeout=10
-            )
+            # 带退避重试的请求
+            response = None
+            for attempt in range(1, 4):
+                try:
+                    response = self._get_session().post(
+                        self.post_url,
+                        json=request_data,
+                        timeout=10,
+                    )
+                    if response.status_code == 200:
+                        break
+                    self.logger.warning(f"HTTP {response.status_code}, retry {attempt}/3")
+                except Exception as e:
+                    self.logger.log_error(f"请求异常: {e}", self.post_url, "POST")
+                if attempt < 3:
+                    time.sleep(2 * attempt)
             end_time = time.time()
             response_time = end_time - start_time
 
-            if response.status_code != 200:
-                self.logger.log_error(f"请求失败，状态码：{response.status_code}", self.post_url, "POST")
+            if response is None or response.status_code != 200:
+                self.logger.log_error("3次重试均失败", self.post_url, "POST")
                 return None
 
             self.logger.log_request(self.post_url, response.status_code, response_time, "POST")
             return response.json()
-
         except Exception as e:
             self.logger.log_error(f"请求错误: {e}", self.post_url, "POST")
             return None
+
+    def _get_session(self):
+        """惰性创建并预热会话：访问首页获取风控所需 cookie。
+
+        评论 API (soa2/13444) 在缺少 cookie 时会返回 430/Rejected；
+        通过移动端 UA 访问 m.ctrip.com 首页后会写入会话 cookie，后续评论请求即可通过。
+        """
+        if self._session is None:
+            sess = requests.Session()
+            sess.headers.update({
+                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
+                              "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+                              "Version/16.0 Mobile/15E148 Safari/604.1",
+            })
+            try:
+                sess.get("https://m.ctrip.com/", timeout=10)
+            except Exception as e:
+                self.logger.warning(f"预热会话获取 cookie 失败: {e}")
+            self._session = sess
+        return self._session
     
     def _get_page_comments(self, poi_id: str, page: int):
         """获取指定页面的评论数据
@@ -409,7 +492,6 @@ class CtripCommentSpider:
             return comments
         except Exception as e:
             self.logger.log_error(f"解析评论数据时出错: {e}", f"POI_ID: {poi_id}, Page: {page}", "PARSING")
-            import traceback
             self.logger.error(traceback.format_exc())  # 记录详细错误信息
             return []
 
@@ -463,7 +545,7 @@ class CtripCommentSpider:
 # 使用示例
 if __name__ == "__main__":
     # 创建日志记录器
-    logger = CtripSpiderLogger("CtripCommentSpiderMain", "logs")
+    logger = SpiderLogger("CtripCommentSpiderMain", "logs")
     # 创建爬虫实例，指定输出目录
     spider = CtripCommentSpider('./Datasets', logger=logger)
     
