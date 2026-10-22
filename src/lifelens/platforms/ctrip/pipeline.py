@@ -3,11 +3,12 @@
 import json
 import os
 import time
-from typing import List, Dict, Optional
+from typing import Dict, Optional
 
 from lifelens.core.logger import SpiderLogger
 from lifelens.core.request_optimizer import RequestOptimizer
 from lifelens.core.pipeline import BasePipeline
+from lifelens.core.storage import json_storage
 from lifelens.platforms.ctrip.sight_list import CtripAttractionScraper
 from lifelens.platforms.ctrip.sight_detail import AttractionDetailFetcher
 from lifelens.platforms.ctrip.sight_comments import CtripCommentSpider
@@ -40,7 +41,8 @@ class CtripPipeline(BasePipeline):
 
     def run(self, district_id: Optional[int] = None, poi_id: Optional[str] = None,
             keyword: str = "", city_name: str = "", poi_name: str = "",
-            list_pages: int = 5, max_comment_pages: int = 50) -> Dict:
+            list_pages: Optional[int] = None,
+            max_comment_pages: Optional[int] = None) -> Dict:
         """统一执行入口：根据参数自动选择景点、地区或关键词模式。
 
         支持三种入口：
@@ -54,8 +56,8 @@ class CtripPipeline(BasePipeline):
             keyword: 景点名或地区名，传入后自动定位 ID
             city_name: 城市名称（用于地区模式目录命名）
             poi_name: 景点名称（用于景点模式目录/文件命名）
-            list_pages: 景点列表爬取页数（地区模式生效）
-            max_comment_pages: 每个景点评论最大爬取页数
+            list_pages: 景点列表最大页数；``None`` 表示不限制，自动爬取所有页
+            max_comment_pages: 每个景点评论最大页数；``None`` 表示不限制，爬取所有页
 
         Returns:
             dict: 运行结果汇总
@@ -107,8 +109,6 @@ class CtripPipeline(BasePipeline):
                 poi_name=poi_name,
                 max_comment_pages=max_comment_pages,
             )
-        # 到此处 keyword 与 poi_id 均为空，provided 校验已保证 district_id 非空；
-        # 显式判空以收窄类型（type narrowing），便于静态检查与防御性编程。
         if district_id is None:
             raise ValueError("district_id 不能为空")
         return self.run_district(
@@ -119,19 +119,19 @@ class CtripPipeline(BasePipeline):
         )
 
     def run_district(self, district_id: int, city_name: str = "",
-            list_pages: int = 5, max_comment_pages: int = 50) -> Dict:
-        """执行完整流水线
+                     list_pages: Optional[int] = None,
+                     max_comment_pages: Optional[int] = None) -> Dict:
+        """执行地区完整流水线
 
         Args:
             district_id: 携程地区ID
             city_name: 城市名称（用于目录命名）
-            list_pages: 景点列表爬取页数
-            max_comment_pages: 每个景点评论最大爬取页数
+            list_pages: 景点列表最大页数；``None`` 表示不限制
+            max_comment_pages: 每个景点评论最大页数；``None`` 表示不限制
 
         Returns:
             dict: 运行结果汇总
         """
-        # 确定输出目录
         dir_name = city_name or str(district_id)
         base_dir = os.path.join(self.output_dir, dir_name)
         detail_dir = os.path.join(base_dir, "details")
@@ -141,15 +141,19 @@ class CtripPipeline(BasePipeline):
 
         self._configure_comment_spider(comment_dir)
 
-        # 流水线进度文件
         pipeline_progress = os.path.join(base_dir, "pipeline_progress.json")
-        completed_sights = self._load_pipeline_progress(pipeline_progress)
+        completed_sights = self._load_json(pipeline_progress, [])
 
-        self.logger.info(f"=== 开始携程景点流水线, 地区ID: {district_id}, 城市: {dir_name} ===")
+        list_pages_desc = "不限制（自动爬取所有页）" if list_pages is None else f"最多 {list_pages} 页"
+        comment_pages_desc = "不限制（爬取所有页）" if max_comment_pages is None else f"最多 {max_comment_pages} 页"
+        self.logger.log_stage(
+            f"携程流水线: {dir_name} (district={district_id}) "
+            f"列表={'全部' if list_pages is None else f'{list_pages}页'} "
+            f"评论={'全部' if max_comment_pages is None else f'{max_comment_pages}页'}")
         start_time = time.time()
 
         # 步骤1: 获取景点列表
-        self.logger.info("步骤1/3: 获取景点列表")
+        self.logger.log_stage("步骤 1/3: 获取景点列表")
         sights = self.list_scraper.get_attractions_with_pagination(
             district_id, pages=list_pages, count_per_page=20)
 
@@ -157,87 +161,87 @@ class CtripPipeline(BasePipeline):
             self.logger.error("未获取到任何景点，流水线终止")
             return {"success": False, "error": "未获取到景点列表"}
 
-        # 保存景点列表
         sights_file = os.path.join(base_dir, "sights.json")
-        self.list_scraper.save_to_json(sights, sights_file)
-        self.logger.info(f"共获取 {len(sights)} 个景点")
+        self._save_json(sights_file, sights)
+        self.logger.info(f"  共 {len(sights)} 个景点")
 
         # 步骤2+3: 逐个获取详情和评论
-        self.logger.info("步骤2/3 + 3/3: 逐个获取详情和评论")
+        self.logger.log_stage("步骤 2-3/3: 详情 + 评论")
         results = {"total": len(sights), "completed": 0, "failed": 0, "skipped": 0}
 
-        for i, sight in enumerate(sights, 1):
-            sight_id = str(sight.get("id", ""))
-            poi_id = str(sight.get("poi_id", ""))
-            sight_name = sight.get("name", "未知")
+        interrupted = False
+        try:
+            for i, sight in enumerate(sights, 1):
+                sight_id = str(sight.get("id", ""))
+                poi_id = str(sight.get("poi_id", ""))
+                sight_name = sight.get("name", "未知")
 
-            # 断点续跑: 跳过已完成的景点
-            if sight_id in completed_sights or poi_id in completed_sights:
-                self.logger.info(f"[{i}/{len(sights)}] {sight_name} 已完成，跳过")
-                results["skipped"] += 1
-                continue
+                if sight_id in completed_sights or poi_id in completed_sights:
+                    self.logger.info(f"  [{i}/{len(sights)}] {sight_name} — 已完成, 跳过")
+                    results["skipped"] += 1
+                    continue
 
-            self.logger.info(f"[{i}/{len(sights)}] 处理景点: {sight_name} (ID: {sight_id})")
+                self.logger.info(f"  [{i}/{len(sights)}] {sight_name}")
 
-            # 获取详情
-            detail = self.detail_fetcher.get_detail(poi_id or sight_id)
-            if detail.get("success"):
-                detail_file = os.path.join(detail_dir, f"{poi_id or sight_id}.json")
-                with open(detail_file, "w", encoding="utf-8") as f:
-                    json.dump(detail, f, ensure_ascii=False, indent=2)
-                self.logger.info(f"  详情已保存")
-            else:
-                self.logger.warning(f"  获取详情失败: {detail.get('error_message')}")
+                detail = self.detail_fetcher.get_detail(poi_id or sight_id)
+                if detail.get("success"):
+                    detail_file = os.path.join(detail_dir, f"{poi_id or sight_id}.json")
+                    self._save_json(detail_file, detail)
+                    self.logger.log_result("详情已保存")
+                else:
+                    self.logger.log_result(f"详情失败: {detail.get('error_message')}", success=False)
 
-            # 爬取评论
-            comment_success = self.comment_spider.crawl_comments(
-                poi_id or sight_id, sight_name, max_pages=max_comment_pages)
+                self.comment_spider.reset_session()
+                comment_success = self.comment_spider.crawl_comments(
+                    poi_id or sight_id, sight_name, max_pages=max_comment_pages)
 
-            # 标记完成（仅当详情和评论都成功时才标记为完成，断点续跑不会跳过评论未完成的景点）
-            key = poi_id or sight_id
-            detail_ok = detail.get("success", False)
-            if detail_ok and comment_success:
-                completed_sights.append(key)
-                self._save_pipeline_progress(pipeline_progress, completed_sights)
-                results["completed"] += 1
-            elif detail_ok or comment_success:
-                # 部分成功：记录但不标记为完成，下次续跑会重新尝试
-                self.logger.info(f"  部分成功: 详情={'成功' if detail_ok else '失败'}, 评论={'成功' if comment_success else '失败'}")
-                results["failed"] += 1
-            else:
-                results["failed"] += 1
+                key = poi_id or sight_id
+                detail_ok = detail.get("success", False)
+                if detail_ok and comment_success:
+                    completed_sights.append(key)
+                    self._save_json(pipeline_progress, completed_sights)
+                    results["completed"] += 1
+                elif detail_ok or comment_success:
+                    results["failed"] += 1
+                else:
+                    results["failed"] += 1
 
-            # 景点间延迟
-            self.request_optimizer.set_delay()
+            self.request_optimizer.set_delay(log_response=False)
+        except KeyboardInterrupt:
+            interrupted = True
+            self.logger.warning("流水线被 Ctrl+C 中断, 保留已保存数据")
+
+        results["interrupted"] = interrupted
 
         end_time = time.time()
         results["elapsed_seconds"] = round(end_time - start_time, 2)
+        self.logger.log_stage("流水线中断" if interrupted else "流水线完成")
         self.logger.info(
-            f"流水线完成: 共 {results['total']} 个景点, "
-            f"完成 {results['completed']}, 跳过 {results['skipped']}, "
-            f"失败 {results['failed']}, 耗时 {results['elapsed_seconds']}秒")
+            f"  总计 {results['total']}  成功 {results['completed']}  "
+            f"跳过 {results['skipped']}  失败 {results['failed']}")
+        self.logger.info(f"  耗时 {results['elapsed_seconds']}s")
 
-        # 保存结果汇总
         summary_file = os.path.join(base_dir, "summary.json")
-        with open(summary_file, "w", encoding="utf-8") as f:
-            json.dump(results, f, ensure_ascii=False, indent=2)
+        self._save_json(summary_file, results)
 
         return results
 
     def run_sight(self, poi_id: str, poi_name: str = "",
-                  max_comment_pages: int = 50, **kwargs) -> Dict:
+                  max_comment_pages: Optional[int] = None, **kwargs) -> Dict:
         """执行指定景点流水线：详情 + 评论
 
         Args:
             poi_id: 携程景点POI ID
             poi_name: 景点名称（可选，为空时从详情中读取）
-            max_comment_pages: 每个景点评论最大爬取页数
+            max_comment_pages: 每个景点评论最大页数；``None`` 表示不限制
 
         Returns:
             dict: 运行结果汇总
         """
         poi_id = str(poi_id)
-        self.logger.info(f"=== 开始指定景点流水线, POI: {poi_id} ===")
+        comment_pages_desc = "不限制（爬取所有页）" if max_comment_pages is None else f"最多 {max_comment_pages} 页"
+        self.logger.log_stage(
+            f"流水线: {poi_id} 评论={'全部' if max_comment_pages is None else f'{max_comment_pages}页'}")
         start_time = time.time()
 
         base_dir = os.path.join(self.output_dir, f"poi_{poi_id}")
@@ -247,23 +251,29 @@ class CtripPipeline(BasePipeline):
         os.makedirs(comment_dir, exist_ok=True)
         self._configure_comment_spider(comment_dir)
 
-        self.logger.info("步骤1/2: 获取景点详情")
+        self.logger.log_stage("步骤 1/2: 获取景点详情")
         detail = self.detail_fetcher.get_detail(poi_id)
         detail_ok = detail.get("success", False)
 
         if detail_ok:
             detail_file = os.path.join(detail_dir, f"{poi_id}.json")
-            with open(detail_file, "w", encoding="utf-8") as f:
-                json.dump(detail, f, ensure_ascii=False, indent=2)
+            self._save_json(detail_file, detail)
             poi_name = poi_name or detail.get("poi_name", "") or poi_id
-            self.logger.info(f"详情已保存: {poi_name}")
+            self.logger.log_result("详情已保存")
         else:
             poi_name = poi_name or poi_id
-            self.logger.warning(f"获取详情失败: {detail.get('error_message')}")
+            self.logger.log_result(f"详情失败: {detail.get('error_message')}", success=False)
 
-        self.logger.info("步骤2/2: 爬取景点评论")
-        comment_success = self.comment_spider.crawl_comments(
-            poi_id, poi_name, max_pages=max_comment_pages)
+        self.logger.log_stage("步骤 2/2: 爬取景点评论")
+        self.comment_spider.reset_session()
+        interrupted = False
+        try:
+            comment_success = self.comment_spider.crawl_comments(
+                poi_id, poi_name, max_pages=max_comment_pages)
+        except KeyboardInterrupt:
+            interrupted = True
+            comment_success = False
+            self.logger.warning("Ctrl+C 停止: 保留已保存数据")
 
         results = {
             "total": 1,
@@ -274,15 +284,17 @@ class CtripPipeline(BasePipeline):
             "poi_name": poi_name,
             "details_success": detail_ok,
             "comments_success": comment_success,
+            "interrupted": interrupted,
         }
         results["elapsed_seconds"] = round(time.time() - start_time, 2)
 
         summary_file = os.path.join(base_dir, "summary.json")
-        with open(summary_file, "w", encoding="utf-8") as f:
-            json.dump(results, f, ensure_ascii=False, indent=2)
+        self._save_json(summary_file, results)
+        self.logger.log_stage("流水线完成")
         self.logger.info(
-            f"指定景点流水线完成: {poi_name}, 详情={detail_ok}, "
-            f"评论={comment_success}, 耗时 {results['elapsed_seconds']}秒")
+            f"  {poi_name}  详情={'✓' if detail_ok else '✗'}  "
+            f"评论={'✓' if comment_success else '✗'}")
+        self.logger.info(f"  耗时 {results['elapsed_seconds']}s")
         return results
 
     def _configure_comment_spider(self, comment_dir: str):
@@ -291,23 +303,21 @@ class CtripPipeline(BasePipeline):
         self.comment_spider.checkpoint_file = os.path.join(comment_dir, "progress.json")
         self.comment_spider.failed_pages_file = os.path.join(comment_dir, "failed_pages.json")
 
-    def _load_pipeline_progress(self, path: str) -> List[str]:
-        """加载流水线进度（已完成的景点ID列表）"""
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except (json.JSONDecodeError, IOError):
-                pass
-        return []
-
-    def _save_pipeline_progress(self, path: str, completed: List[str]):
-        """保存流水线进度"""
+    def _load_json(self, path: str, default=None):
+        """加载 JSON 文件；不存在或解析失败时返回 default。"""
         try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(completed, f, ensure_ascii=False, indent=2)
-        except IOError as e:
-            self.logger.error(f"保存流水线进度失败: {e}")
+            return json_storage.load(path)
+        except (OSError, ValueError):
+            return default
+
+    def _save_json(self, path: str, data) -> bool:
+        """保存 JSON 文件；失败返回 False。"""
+        try:
+            json_storage.save(data, path)
+            return True
+        except (OSError, TypeError) as e:
+            self.logger.error(f"保存 JSON 失败: {e}")
+            return False
 
 
 if __name__ == "__main__":
@@ -315,12 +325,15 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="携程景点爬虫流水线")
     parser.add_argument("--keyword", type=str, default="", help="地区名或景点名（自动解析ID）")
-    parser.add_argument("--district-id", type=int, default=None, help="携程地区ID（手动指定，与 --keyword 二选一）")
+    parser.add_argument("--district-id", type=int, default=None,
+                        help="携程地区ID（手动指定，与 --keyword 二选一）")
     parser.add_argument("--poi-id", type=str, default="", help="指定景点的POI ID")
     parser.add_argument("--poi-name", type=str, default="", help="指定景点名称")
     parser.add_argument("--city-name", type=str, default="", help="城市名称")
-    parser.add_argument("--list-pages", type=int, default=5, help="景点列表页数")
-    parser.add_argument("--max-comment-pages", type=int, default=50, help="每景点评论最大页数")
+    parser.add_argument("--list-pages", type=int, default=None,
+                        help="景点列表最大页数（不填则自动爬取所有页）")
+    parser.add_argument("--max-comment-pages", type=int, default=None,
+                        help="每景点评论最大页数（不填则爬取所有页）")
     parser.add_argument("--output-dir", type=str, default="data", help="输出目录")
     args = parser.parse_args()
 
