@@ -35,7 +35,7 @@ class SpiderLogger:
         
         # 创建日志格式
         formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            '%(asctime)s | %(levelname)s | %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
         )
         
@@ -157,4 +157,22 @@ class SpiderLogger:
             stage (str): 处理阶段
         """
         progress = (current / total) * 100 if total > 0 else 0
-        self.info(f"{stage.title()} progress: {current}/{total} ({progress:.2f}%)")
+        self.info(f"  [{current}/{total}] {progress:.0f}%  {stage}")
+
+    def log_stage(self, title: str):
+        """记录阶段标题（带分隔线）。
+
+        Args:
+            title: 阶段标题
+        """
+        self.info(f"[ {title} ]")
+
+    def log_result(self, message: str, success: bool = True):
+        """记录子步骤结果。
+
+        Args:
+            message: 结果描述
+            success: 是否成功
+        """
+        mark = "✓" if success else "✗"
+        self.info(f"    {mark} {message}")

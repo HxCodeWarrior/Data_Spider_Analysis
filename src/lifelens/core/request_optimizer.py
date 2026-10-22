@@ -12,12 +12,14 @@ class RequestOptimizer:
         self.logger = logger or SpiderLogger("RequestOptimizer", "logs")
         self.request_count = 0
 
-    def set_delay(self):
+    def set_delay(self, log_response: bool = True):
         """设置随机延迟以防止被封禁"""
         delay = random.uniform(*self.delay_range)
         self.request_count += 1
-        self.logger.log_request(f"Delay request #{self.request_count}", 200, delay, "SLEEP")
+        if log_response:
+            self.logger.log_request(f"Delay request #{self.request_count}", 200, delay, "SLEEP")
         time.sleep(delay)
+        return self.request_count, delay
 
     def get_random_proxy(self):
         """获取随机代理"""
