@@ -13,11 +13,12 @@
 - **请求防护**：随机延迟（默认 1-3 秒）、HTTP 非 200 状态码线性退避重试 3 次
 - **集中配置**：API 端点、请求头、超时、分页参数统一管理于 `config.py`
 - **离线测试**：全部单测 mock 网络请求，不依赖真实 API 可用性
+- **统一基础设施**：`BaseSpider` 重试复用与 `StorageBackend` 统一 JSON/CSV 存储已接入各携程模块
 
 **待实现**
 
 - **分析层**：情感分析、词云、地理热图（占位模块与依赖已就位）
-- **基础设施接入**：`BaseSpider` 重试复用、`StorageBackend` 统一存储、`Sight` / `Comment` 数据模型替换裸 dict
+- **数据模型接入**：`Sight` / `Comment` 数据模型替换裸 dict（模型已定义，尚未替换各模块返回值）
 - **代理轮换**：`RequestOptimizer.get_random_proxy()` 已实现，但尚未接入各爬虫的实际请求调用
 
 ## 环境要求
@@ -71,8 +72,8 @@ python -m lifelens.platforms.ctrip.pipeline --keyword "西湖" --output-dir ./ou
 | `--poi-id` | 景点 POI ID | `""` |
 | `--poi-name` | 景点名称（用于目录/文件命名） | `""` |
 | `--city-name` | 城市名（地区模式用于目录命名） | `""` |
-| `--list-pages` | 景点列表爬取页数 | `5` |
-| `--max-comment-pages` | 每个景点评论最大爬取页数 | `50` |
+| `--list-pages` | 景点列表爬取页数 | `None`（不限制，自动爬取所有页） |
+| `--max-comment-pages` | 每个景点评论最大爬取页数 | `None`（不限制，爬取所有页） |
 | `--output-dir` | 输出根目录 | `data` |
 
 > 注：顶层入口 `python -m lifelens`（或安装后的 `lifelens` 命令）目前只是子命令路由占位（`ctrip-list` / `ctrip-detail` / `ctrip-comments` 尚未接入），请直接使用上面的模块入口。
@@ -125,6 +126,7 @@ from lifelens.platforms.ctrip.sight_list import CtripAttractionScraper
 from lifelens.platforms.ctrip.sight_detail import AttractionDetailFetcher
 from lifelens.platforms.ctrip.sight_comments import CtripCommentSpider
 from lifelens.platforms.ctrip.sight_locator import SightLocator
+from lifelens.core.storage import json_storage
 
 # 自动解析 ID（无需手动查询）
 locator = SightLocator()
@@ -144,7 +146,7 @@ info = locator.locate("西湖")
 # 获取景点列表
 scraper = CtripAttractionScraper()
 sights = scraper.get_attractions_with_pagination(district_id=9, pages=2)
-scraper.save_to_json(sights, "data/sights.json")
+json_storage.save(sights, "data/sights.json")
 
 # 获取景点详情（get_detail 返回原始解析结果，get_formatted_detail 返回精简视图）
 fetcher = AttractionDetailFetcher()
@@ -236,7 +238,7 @@ D:\Environments\Anaconda\envs\AI\python.exe -m pytest -q
 python -m pytest -q
 ```
 
-`pyproject.toml` 已配置 `pythonpath = ["src"]`，无需手动设置 `PYTHONPATH`。当前基线：**37 passed**。
+`pyproject.toml` 已配置 `pythonpath = ["src"]`，无需手动设置 `PYTHONPATH`。当前基线：**47 passed**。
 
 | 测试文件 | 覆盖内容 |
 |----------|----------|
@@ -248,6 +250,8 @@ python -m pytest -q
 | `test_comments_api.py` | 评论 API 响应结构探测 |
 | `test_pipeline_run.py` | `run()` 三种模式的参数分发与关键词解析 |
 | `test_log.py` | 日志各级别输出 |
+| `test_base_spider.py` | `BaseSpider` 共享重试封装、`CtripBaseSpider` JSON POST、继承契约 |
+| `test_keyboard_interrupt.py` | 评论爬虫与流水线 `Ctrl+C` 中断保留断点/已完成进度 |
 
 所有测试均为离线测试（mock 网络），不依赖真实 API。`tests/online_smoke_test.py` 是联网冒烟脚本，文件名不匹配 `test_*.py`，pytest 不会自动收集，需要时手动运行。
 
@@ -272,6 +276,7 @@ LifeLens/
 │   │   │   ├── sight_list.py     #   地区 → 景点列表 (分页)
 │   │   │   ├── sight_detail.py   #   景点详情 (电话/门票/描述/交通)
 │   │   │   ├── sight_comments.py #   评论爬取 (断点续爬 + CSV)
+│   │   │   ├── base.py          #   CtripBaseSpider 公共请求/重试基类
 │   │   │   └── pipeline.py       #   CtripPipeline 全流程编排 (含 CLI)
 │   │   └── meituan/              # 美团平台 (待实现)
 │   ├── models/
@@ -305,8 +310,8 @@ LifeLens/
 - [x] 集中配置（`config.py` 统一管理）
 - [x] ID 自动解析（`SightLocator`：关键词 → `poi_id` / `district_id`）
 - [x] 流水线 CLI（`python -m lifelens.platforms.ctrip.pipeline`）
-- [ ] `BaseSpider` 继承复用（消除各模块重复的重试逻辑）
-- [ ] `StorageBackend` 接入（统一 JSON/CSV 存储）
+- [x] `BaseSpider` 继承复用（消除各模块重复的重试逻辑）
+- [x] `StorageBackend` 接入（统一 JSON/CSV 存储）
 - [ ] 数据模型接入（`Sight` / `Comment` 替换裸 dict）
 - [ ] 代理轮换接入实际请求（`get_random_proxy()` 已实现）
 - [ ] 顶层 CLI 子命令接入（`ctrip-list` / `ctrip-detail` / `ctrip-comments`）
