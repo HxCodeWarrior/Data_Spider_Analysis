@@ -25,21 +25,18 @@ poi_id 和 district_id，无需手动填充。
 """
 
 import json
-import time
-import traceback
 from typing import Dict, List, Optional
-
-import requests
 
 from lifelens.core.logger import SpiderLogger
 from lifelens.core.request_optimizer import RequestOptimizer
 from lifelens.config import ctrip_config
+from lifelens.platforms.ctrip.base import CtripBaseSpider
 
 # 搜索结果中视为"景点"的类型
 SIGHT_TYPES = {"sight", "sightplay"}
 
 
-class SightLocator:
+class SightLocator(CtripBaseSpider):
     """携程 ID 定位器：根据关键词自动定位 poi_id / district_id。
 
     搜索 API (soa2/26872/search) 返回混合类型结果，其中：
@@ -50,15 +47,22 @@ class SightLocator:
 
     def __init__(self, delay_range: tuple = (1, 3), logger: Optional[SpiderLogger] = None,
                  request_optimizer: Optional[RequestOptimizer] = None):
+        logger = logger or SpiderLogger("SightLocator", "logs")
+        super().__init__(
+            logger=logger,
+            request_optimizer=request_optimizer or RequestOptimizer(
+                delay_range=delay_range, logger=logger),
+        )
         self.delay_range = delay_range
         self.search_url = ctrip_config.sight_search_url
-        self.logger = logger or SpiderLogger("SightLocator", "logs")
-        self.request_optimizer = request_optimizer or RequestOptimizer(
-            delay_range=delay_range, logger=self.logger)
 
     # ------------------------------------------------------------------ #
     # 公开 API
     # ------------------------------------------------------------------ #
+
+    def fetch(self, keyword: str) -> Optional[Dict]:
+        """统一抓取入口：自动定位关键词对应的景点或地区 ID。"""
+        return self.locate(keyword)
 
     def search(self, keyword: str, pagesize: int = 10) -> List[Dict]:
         """搜索关键词，返回原始结果列表。
@@ -216,38 +220,9 @@ class SightLocator:
             "pagesize": pagesize,
         }
 
-        self.request_optimizer.set_delay()
-
-        start_time = time.time()
-        response = None
-        for attempt in range(1, 4):
-            try:
-                response = requests.post(
-                    self.search_url,
-                    json=payload,
-                    timeout=10,
-                )
-                if response.status_code == 200:
-                    break
-                self.logger.warning(f"HTTP {response.status_code}, retry {attempt}/3")
-            except Exception as e:
-                self.logger.log_error(f"请求异常: {e}", self.search_url, "POST")
-            if attempt < 3:
-                time.sleep(2 * attempt)
-        else:
-            self.logger.log_error("3次重试均失败", self.search_url, "POST")
-            return None
-
-        if response is None:
-            return None
-
-        response_time = time.time() - start_time
-        self.logger.log_request(self.search_url, response.status_code, response_time, "POST")
-
-        try:
-            body = response.json()
-        except (json.JSONDecodeError, ValueError) as e:
-            self.logger.log_error(f"JSON 解析异常: {e}", self.search_url, "JSON_PARSE")
+        self.request_optimizer.set_delay(log_response=False)
+        body = self._post_json(self.search_url, payload)
+        if body is None:
             return None
 
         data = body.get("data")
