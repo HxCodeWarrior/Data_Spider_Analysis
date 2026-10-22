@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from lifelens.platforms.ctrip.sight_list import CtripAttractionScraper
+from lifelens.core.storage import json_storage
 
 
 def run_district_pipeline():
@@ -20,14 +21,14 @@ def run_district_pipeline():
         district_id, pages=1, count_per_page=20
     )
     sights_file = os.path.join(out_dir, "sights.json")
-    list_scraper.save_to_json(sights, sights_file)
+    json_storage.save(sights, sights_file)
 
     from lifelens.platforms.ctrip.pipeline import CtripPipeline
     pipeline = CtripPipeline(output_dir=out_dir)
-    pipeline.request_optimizer.set_delay = lambda: None
-    pipeline.list_scraper.request_optimizer.set_delay = lambda: None
-    pipeline.detail_fetcher.request_optimizer.set_delay = lambda: None
-    pipeline.comment_spider.request_optimizer.set_delay = lambda: None
+    pipeline.request_optimizer.set_delay = lambda **kw: (0, 0.0)
+    pipeline.list_scraper.request_optimizer.set_delay = lambda **kw: (0, 0.0)
+    pipeline.detail_fetcher.request_optimizer.set_delay = lambda **kw: (0, 0.0)
+    pipeline.comment_spider.request_optimizer.set_delay = lambda **kw: (0, 0.0)
     result = pipeline.run(
         district_id=district_id,
         city_name=str(district_id),

@@ -37,8 +37,8 @@ def _comment_record(comment_id: str, nickname: str, score: str, content: str):
 
 def _make_spider(tmp_path: Path):
     spider = CtripCommentSpider(output_dir=str(tmp_path / "comments"))
-    spider.request_optimizer.set_delay = lambda: None
-    spider._get_total_pages = lambda poi_id: 2
+    spider.request_optimizer.set_delay = lambda **kw: (0, 0.0)
+    spider._get_total_pages = lambda poi_id: (2, None)
     spider._get_page_comments = Mock(side_effect=[
         [
             _comment_record("c1", "游客A", "4.8", "很好 玩"),
