@@ -1,25 +1,32 @@
 # LifeLens
 
-> 旅游数据爬取与分析系统 —— 从携程等平台采集景点信息、详情与用户评论，为旅行决策提供数据支撑。
+> 旅游数据爬取与分析系统 —— 从携程、去哪儿等平台采集景点信息、详情与用户评论，为旅行决策提供数据支撑。
+
+> **免责声明**
+>
+> 请以学习与研究为目的使用本项目。禁止将本项目用于商业用途、大规模或高频采集、绕过平台访问控制，以及任何违反法律法规或平台规则的行为。使用者应自行确认采集行为的合规性，并承担因使用本项目产生的一切责任。项目作者不对任何直接或间接损失、数据使用后果或法律纠纷负责。
+>
+> 详细条款见 [使用须知](#使用须知) 与 [License](#license)。
 
 ## 功能概览
 
 **已实现**
 
-- **全链路采集**：携程景点列表、详情、评论一站式爬取；美团平台已预留模块位
-- **ID 自动解析**：根据景点名或地区名自动定位 `poi_id` / `district_id`，无需手动查询
-- **流水线编排**：`list → detail → comments` 一键串联，单个入口支持景点、地区、关键词三种模式
+- **全链路采集**：携程与去哪儿景点列表、详情、评论一站式爬取
+- **ID 自动解析**：根据景点名或城市名自动定位 `poi_id` / `district_id`，无需手动查询
+- **流水线编排**：`list → detail → comments` 一键串联，单个入口支持 `sight` / `city` / `poi_id` / `district_id` 四种目标
 - **断点续跑**：中断后重新执行自动跳过已完成景点；评论按页 checkpoint，失败页面单独记录
 - **请求防护**：随机延迟（默认 1-3 秒）、HTTP 非 200 状态码线性退避重试 3 次
 - **集中配置**：API 端点、请求头、超时、分页参数统一管理于 `config.py`
-- **离线测试**：全部单测 mock 网络请求，不依赖真实 API 可用性
-- **统一基础设施**：`BaseSpider` 重试复用与 `StorageBackend` 统一 JSON/CSV 存储已接入各携程模块
+- **离线测试**：核心单测 mock 网络请求，不依赖真实 API 可用性
+- **统一基础设施**：`BaseSpider` 重试、`SpiderLogger` 分级日志、`storage_layout` 统一目录布局与 `StorageBackend` JSON/CSV 存储
 
 **待实现**
 
 - **分析层**：情感分析、词云、地理热图（占位模块与依赖已就位）
 - **数据模型接入**：`Sight` / `Comment` 数据模型替换裸 dict（模型已定义，尚未替换各模块返回值）
 - **代理轮换**：`RequestOptimizer.get_random_proxy()` 已实现，但尚未接入各爬虫的实际请求调用
+- **美团平台**：平台目录已预留，尚未接入
 
 ## 环境要求
 
@@ -276,12 +283,17 @@ python -m pytest -q
 | `test_comment_csv.py` | CSV 表头、字段顺序、跨页追加、断点进度 |
 | `test_comment_pagination.py` | 总页数向上取整计算 |
 | `test_comments_api.py` | 评论 API 响应结构探测 |
-| `test_pipeline_run.py` | `run()` 三种模式的参数分发与关键词解析 |
+| `test_pipeline_run.py` | `run()` 四种目标分发、城市/景点解析与统一 CLI 参数 |
 | `test_log.py` | 日志各级别输出 |
+| `test_logging_standard.py` | 分级日志格式、URL 脱敏、日志文件分组、请求/延迟统计 |
+| `test_storage_layout.py` | 行政区解析、安全路径、平台/省市/景点目录布局 |
 | `test_base_spider.py` | `BaseSpider` 共享重试封装、`CtripBaseSpider` JSON POST、继承契约 |
 | `test_keyboard_interrupt.py` | 评论爬虫与流水线 `Ctrl+C` 中断保留断点/已完成进度 |
+| `test_qunar_sight_detail.py` | 去哪儿详情页与简介页字段解析 |
+| `test_qunar_comment_locator.py` | 去哪儿 `window.context` 评论解析与兜底逻辑 |
+| `test_qunar_online.py` | 去哪儿联网冒烟测试（离线自动跳过） |
 
-所有测试均为离线测试（mock 网络），不依赖真实 API。`tests/online_smoke_test.py` 是联网冒烟脚本，文件名不匹配 `test_*.py`，pytest 不会自动收集，需要时手动运行。
+除 `test_qunar_online.py` 与 `tests/online_smoke_test.py` 外，其余测试均为离线测试（mock 网络），不依赖真实 API。`tests/online_smoke_test.py` 文件名不匹配 `test_*.py`，pytest 不会自动收集，需要时手动运行。
 
 ## 项目结构
 
@@ -294,18 +306,26 @@ LifeLens/
 │   ├── config.py                 # 集中配置 (URL / headers / 超时 / 分页)
 │   ├── core/                     # 基础设施层 (平台无关)
 │   │   ├── base_spider.py        #   BaseSpider 抽象基类 + 重试封装
-│   │   ├── logger.py             #   SpiderLogger 通用日志
+│   │   ├── logger.py             #   SpiderLogger 分级日志 + 任务汇总
 │   │   ├── request_optimizer.py  #   随机延迟 + 代理 + 退避参数
+│   │   ├── storage_layout.py     #   跨平台数据目录布局 + 行政区解析
 │   │   ├── storage.py            #   StorageBackend (JSON / CSV)
-│   │   └── pipeline.py           #   BasePipeline 编排接口
+│   │   └── pipeline.py           #   BasePipeline + PipelineStats 结果统计
 │   ├── platforms/
 │   │   ├── ctrip/                # 携程平台
 │   │   │   ├── sight_locator.py  #   关键词 → POI ID / 地区 ID (自动解析)
 │   │   │   ├── sight_list.py     #   地区 → 景点列表 (分页)
 │   │   │   ├── sight_detail.py   #   景点详情 (电话/门票/描述/交通)
 │   │   │   ├── sight_comments.py #   评论爬取 (断点续爬 + CSV)
-│   │   │   ├── base.py          #   CtripBaseSpider 公共请求/重试基类
+│   │   │   ├── base.py           #   CtripBaseSpider 公共请求/重试基类
 │   │   │   └── pipeline.py       #   CtripPipeline 全流程编排 (含 CLI)
+│   │   ├── qunar/                # 去哪儿平台
+│   │   │   ├── sight_locator.py  #   景点 / 城市 → ID 解析
+│   │   │   ├── sight_list.py     #   城市榜单 → 景点列表
+│   │   │   ├── sight_detail.py   #   详情页 + 内嵌简介页解析
+│   │   │   ├── sight_comments.py #   评论爬取 (window.context + CSV)
+│   │   │   ├── base.py           #   QunarBaseSpider 公共 GET / 解析基类
+│   │   │   └── pipeline.py       #   QunarPipeline 全流程编排 (含 CLI)
 │   │   └── meituan/              # 美团平台 (待实现)
 │   ├── models/
 │   │   └── sight.py              # Sight / SightDetail / Comment 数据模型
@@ -334,10 +354,14 @@ LifeLens/
 - [x] 携程景点列表爬取（分页 + 重试）
 - [x] 携程景点详情获取（结构化解析）
 - [x] 携程评论爬取（断点续爬 + CSV 持久化）
+- [x] 去哪儿景点列表 / 详情 / 定位 / 评论爬取
 - [x] 流水线编排（list → detail → comments）
 - [x] 集中配置（`config.py` 统一管理）
 - [x] ID 自动解析（`SightLocator`：关键词 → `poi_id` / `district_id`）
-- [x] 流水线 CLI（`python -m lifelens.platforms.ctrip.pipeline`）
+- [x] 流水线 CLI（携程 / 去哪儿模块入口）
+- [x] 统一平台参数（`sight` / `city` / `poi_id` / `district_id`）
+- [x] 分级日志与任务汇总（`SpiderLogger` / `PipelineStats`）
+- [x] 统一数据目录布局（`data/<platform>/<province>/<city>/<sight>_<poi-id>`）
 - [x] `BaseSpider` 继承复用（消除各模块重复的重试逻辑）
 - [x] `StorageBackend` 接入（统一 JSON/CSV 存储）
 - [ ] 数据模型接入（`Sight` / `Comment` 替换裸 dict）
@@ -348,8 +372,64 @@ LifeLens/
 
 ## 使用须知
 
-本项目面向学习与研究用途。采集前请确认已遵守目标平台的服务条款与相关法规，合理控制请求频率，避免影响服务可用性；采集数据仅限个人分析使用，请勿用于商业用途或二次分发。
+> 使用本项目即表示你已阅读并同意以下条款。如不同意，请停止使用并删除本项目及相关数据。
+
+### 1. 项目定位
+
+本项目仅用于个人学习、技术研究与数据分析练习，不提供任何形式的数据采集服务，也不构成对任何平台数据的授权。
+
+### 2. 合规使用
+
+- 使用前请自行确认目标平台的服务条款、robots 协议、用户协议以及所在地法律法规；
+- 不得采集、存储或传播涉及国家安全、商业秘密、个人隐私或其他受法律保护的信息；
+- 不得绕过登录验证、验证码、访问控制、反爬机制或其他技术保护措施；
+- 不得将本项目用于大规模、高频次或影响目标平台正常运行的采集活动；
+- 如需采集个人信息，应取得合法授权，并遵循最小必要原则。
+
+### 3. 使用限制
+
+- 禁止将本项目及其衍生代码用于任何商业用途，包括但不限于销售、付费服务、数据转售或商业数据产品；
+- 禁止将采集结果用于骚扰、画像、精准营销、欺诈或其他侵害他人权益的行为；
+- 禁止删除、隐藏或篡改本项目中的版权声明与许可信息。
+
+### 4. 数据与隐私
+
+- 采集数据归原始权利人或相关平台所有，本项目不授予你对第三方数据的任何权利；
+- 评论、用户昵称、IP 归属地等字段可能涉及个人信息，请谨慎存储、脱敏处理，并在使用后及时删除；
+- 请勿将采集数据上传至公开仓库、云盘或其他可被未授权访问的位置。
+
+### 5. 请求频率与平台影响
+
+- 默认随机延迟为 1-3 秒，请根据实际情况适当调大，避免对目标平台造成压力；
+- 出现限流、封禁或异常响应时应立即停止采集；
+- 本项目不提供绕过限流、验证码或封禁的能力。
+
+### 6. 账号与凭证
+
+- 请勿将 Cookie、Token、账号密码等敏感凭证提交至版本库；
+- 建议将凭证保存在本地未跟踪文件中，并定期轮换；
+- 因凭证泄露造成的损失由使用者自行承担。
+
+### 7. 风险与责任
+
+- 本项目按“现状”提供，不保证功能完整性、稳定性或适用性；
+- 因使用或无法使用本项目导致的任何直接或间接损失、数据丢失、账号封禁或法律纠纷，作者不承担责任；
+- 使用者应自行评估并承担全部使用风险。
+
+### 8. 条款变更
+
+作者保留随时修改本使用须知的权利，修改后的条款自发布之日起生效。
 
 ## License
 
-见 [LICENSE](LICENSE)。
+本项目采用 [CC BY-NC 4.0（知识共享 署名-非商业性使用 4.0 国际）](https://creativecommons.org/licenses/by-nc/4.0/) 许可协议，完整条款见 [LICENSE](LICENSE)。
+
+在遵守以下条件的前提下，你可以复制、修改、分发和以非商业目的使用本项目：
+
+- **署名**：必须注明原作者及本项目链接，并说明是否作出修改；
+- **非商业性使用**：不得将本项目用于商业目的，包括销售、付费服务、数据转售或其他直接或间接获利行为；
+- **无附加限制**：不得通过法律条款或技术手段限制他人行使许可证允许的权利。
+
+如需学术授权、 商业授权或其他用途，请联系 [hsuantx@163.com](mailto:hsuantx@163.com)。
+
+> 注意：本项目许可证仅覆盖本项目代码与文档，不覆盖通过本项目采集的第三方数据。第三方数据的版权、使用权与合规责任由原始权利人或使用者自行承担。
