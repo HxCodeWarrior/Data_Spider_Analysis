@@ -21,7 +21,7 @@ class BaseSpider(ABC):
         pass
 
     def _request_with_retry(self, request_fn, url="", method="POST", max_retries=3,
-                            on_status=None, log_response=True):
+                            on_status=None, log_response=True, stage="DETAIL"):
         """带退避重试的请求封装。
 
         Args:
@@ -32,23 +32,31 @@ class BaseSpider(ABC):
             on_status: 可选回调 ``(response, attempt) -> Optional[float]``，
                 收到非 200 响应时调用；返回数值则覆盖默认退避秒数（2 * attempt）
             log_response: 为 ``False`` 时跳过 ``log_request``（用于调用方自行输出合并日志）
+            stage: 请求所属的标准日志阶段
 
         Returns:
             requests.Response；全部重试失败时返回 None
         """
-        start_time = time.time()
         response = None
+        last_reason = ""
+        last_status = "N/A"
         for attempt in range(1, max_retries + 1):
+            attempt_start = time.perf_counter()
             try:
                 response = request_fn()
             except Exception as e:
-                self.logger.log_error(f"请求异常: {e}", url, method)
                 response = None
+                last_reason = f"{type(e).__name__}: {e}"
+
+            elapsed = time.perf_counter() - attempt_start
+            self.logger.record_request_duration(elapsed)
+            self._last_elapsed = elapsed
 
             if response is not None and response.status_code == 200:
+                last_reason = ""
                 if log_response:
                     self.logger.log_request(url, response.status_code,
-                                            time.time() - start_time, method)
+                                            elapsed, method, stage=stage)
                 return response
 
             backoff = 2 * attempt
@@ -57,10 +65,16 @@ class BaseSpider(ABC):
                 if custom_backoff is not None:
                     backoff = custom_backoff
 
-            status = getattr(response, "status_code", "N/A")
-            self.logger.warning(f"HTTP {status}, retry {attempt}/{max_retries}")
+            last_status = getattr(response, "status_code", "N/A")
             if attempt < max_retries:
+                reason = last_reason or f"HTTP {last_status}"
+                self.logger.warning_stage(
+                    stage,
+                    f"Request attempt failed | Reason: {reason} | "
+                    f"Retry: {attempt}/{max_retries}"
+                )
                 time.sleep(backoff)
 
-        self.logger.log_error("3次重试均失败", url, method)
+        reason = last_reason or f"HTTP {last_status} after {max_retries} attempts"
+        self.logger.log_error(reason, url, method, stage=stage)
         return None

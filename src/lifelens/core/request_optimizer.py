@@ -11,32 +11,42 @@ class RequestOptimizer:
         self.proxies = proxies if proxies is not None else []
         self.logger = logger or SpiderLogger("RequestOptimizer", "logs")
         self.request_count = 0
+        self.last_delay = 0.0
 
     def set_delay(self, log_response: bool = True):
         """设置随机延迟以防止被封禁"""
         delay = random.uniform(*self.delay_range)
         self.request_count += 1
-        if log_response:
-            self.logger.log_request(f"Delay request #{self.request_count}", 200, delay, "SLEEP")
+        sleep_start = time.perf_counter()
         time.sleep(delay)
-        return self.request_count, delay
+        measured_delay = time.perf_counter() - sleep_start
+        self.last_delay = measured_delay
+        self.logger.record_delay_duration(measured_delay)
+        if log_response:
+            self.logger.info_stage(
+                "COMMENT", f"Randomized delay: {self.logger.format_seconds(measured_delay)}")
+        return self.request_count, measured_delay
 
     def get_random_proxy(self):
         """获取随机代理"""
         if self.proxies:
-            proxy = random.choice(self.proxies)
-            self.logger.info(f"Selected random proxy: {proxy}")
-            return proxy
+            self.logger.info_stage("START", "Proxy selected")
+            return random.choice(self.proxies)
         else:
-            self.logger.warning("No proxies available, returning None")
+            self.logger.warning_stage("START", "No proxy configured")
             return None
 
     def log_delay(self):
         """日志延迟信息"""
         delay = random.uniform(*self.delay_range)
         self.request_count += 1
-        self.logger.info(f"Waiting for {delay:.2f} seconds before the next request (Request #{self.request_count})")
+        sleep_start = time.perf_counter()
         time.sleep(delay)
+        measured_delay = time.perf_counter() - sleep_start
+        self.last_delay = measured_delay
+        self.logger.record_delay_duration(measured_delay)
+        self.logger.info_stage(
+            "COMMENT", f"Randomized delay: {self.logger.format_seconds(measured_delay)}")
 
 # 示例用法
 if __name__ == "__main__":
@@ -55,5 +65,5 @@ if __name__ == "__main__":
     for i in range(5):
         request_optimizer.log_delay()  # 添加延迟
         proxy = request_optimizer.get_random_proxy()  # 获取代理
-        spider_logger.info(f"Using proxy: {proxy}")  # 在实际请求中使用代理
+        spider_logger.info_stage("START", "Proxy configured")  # 在实际请求中使用代理
         # 这里可以放置实际请求的代码
