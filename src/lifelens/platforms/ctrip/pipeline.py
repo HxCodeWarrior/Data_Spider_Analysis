@@ -155,7 +155,8 @@ class CtripPipeline(BasePipeline):
         # 步骤1: 获取景点列表
         self.logger.log_stage("步骤 1/3: 获取景点列表")
         sights = self.list_scraper.get_attractions_with_pagination(
-            district_id, pages=list_pages, count_per_page=20)
+            district_id, pages=list_pages, count_per_page=20,
+            current_step=1, total_steps=3)
 
         if not sights:
             self.logger.error("未获取到任何景点，流水线终止")

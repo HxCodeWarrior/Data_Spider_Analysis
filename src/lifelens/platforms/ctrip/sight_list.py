@@ -18,12 +18,16 @@ class CtripAttractionScraper(CtripBaseSpider):
         super().__init__(
             logger=logger, request_optimizer=request_optimizer, timeout=timeout)
         self.url = ctrip_config.sight_list_url
+        self._last_http_status = 0
+        self._last_elapsed = 0.0
 
     def fetch(self, district_id: int, pages: Optional[int] = 1,
               count_per_page: int = 20, **kwargs) -> List[Dict]:
         """统一抓取入口：获取多页景点数据。"""
         return self.get_attractions_with_pagination(
-            district_id, pages=pages, count_per_page=count_per_page)
+            district_id, pages=pages, count_per_page=count_per_page,
+            current_step=kwargs.pop("current_step", 1),
+            total_steps=kwargs.pop("total_steps", 1))
 
     # ------------------------------------------------------------------ #
     # 列表获取
@@ -43,7 +47,10 @@ class CtripAttractionScraper(CtripBaseSpider):
         data = self._build_request_data(district_id, page, count)
         self.request_optimizer.set_delay(log_response=False)
 
-        response_json = self._post_json(self.url, data)
+        req_start = time.time()
+        response_json = self._post_json(self.url, data, log_response=False)
+        self._last_elapsed = time.time() - req_start
+        self._last_http_status = 200 if response_json else 0
         if not response_json or not response_json.get('result'):
             self.logger.warning(f"第{page}页响应中未找到 result 字段")
             return []
@@ -63,7 +70,9 @@ class CtripAttractionScraper(CtripBaseSpider):
 
     def get_attractions_with_pagination(self, district_id: int,
                                         pages: Optional[int] = 1,
-                                        count_per_page: int = 20) -> List[Dict]:
+                                        count_per_page: int = 20,
+                                        current_step: int = 1,
+                                        total_steps: int = 1) -> List[Dict]:
         """获取多页景点数据。
 
         ``pages`` 为 ``None`` 时不限制页数，持续爬取直至某页返回空数据。
@@ -79,19 +88,19 @@ class CtripAttractionScraper(CtripBaseSpider):
         start_time = time.time()
         all_attractions = []
 
+        total_pages_str = "?" if pages is None else str(pages)
         page = 1
         while pages is None or page <= pages:
             attractions = self.get_attractions_list(district_id, page, count_per_page)
 
+            self.logger.log_page_progress(
+                current_step, total_steps, page, total_pages_str,
+                len(attractions), self._last_http_status, self._last_elapsed)
+
             if not attractions:
-                page_desc = f"[{page}/{pages}]" if pages else f"page {page}"
-                self.logger.info(f"  列表 {page_desc}: 0 个, 停止")
                 break
 
             all_attractions.extend(attractions)
-
-            page_desc = f"[{page}/{pages}]" if pages else f"page {page}"
-            self.logger.info(f"  列表 {page_desc}: {len(attractions)} 个景点")
 
             if pages is None or page < pages:
                 self.request_optimizer.set_delay(log_response=False)

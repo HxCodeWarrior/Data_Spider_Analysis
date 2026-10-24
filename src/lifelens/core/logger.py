@@ -159,6 +159,27 @@ class SpiderLogger:
         progress = (current / total) * 100 if total > 0 else 0
         self.info(f"  [{current}/{total}] {progress:.0f}%  {stage}")
 
+    def log_page_progress(self, current_step, total_steps, page, total_pages,
+                          sight_count, http_status, elapsed):
+        """记录分页进度日志（结构化格式）。
+
+        Args:
+            current_step: 当前流水线步骤编号
+            total_steps: 流水线总步骤数
+            page: 当前页码
+            total_pages: 总页数（未知时传 "?"）
+            sight_count: 本页景点数量
+            http_status: HTTP 状态码
+            elapsed: 请求耗时（秒）
+        """
+        self.info(
+            f"step={current_step}/{total_steps} | "
+            f"page={page}/{total_pages} | "
+            f"sight={sight_count} | "
+            f"status={http_status} | "
+            f"time={elapsed:.2f}s"
+        )
+
     def log_stage(self, title: str):
         """记录阶段标题（带分隔线）。
 

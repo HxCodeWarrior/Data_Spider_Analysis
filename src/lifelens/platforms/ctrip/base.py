@@ -29,7 +29,7 @@ class CtripBaseSpider(BaseSpider):
 
     def _post_json(self, url: str, payload: dict, *,
                    send: Optional[Callable[[], requests.Response]] = None,
-                   on_status=None) -> Optional[dict]:
+                   on_status=None, log_response: bool = True) -> Optional[dict]:
         """POST JSON 请求并返回解析后的响应字典；失败返回 None。
 
         Args:
@@ -40,7 +40,7 @@ class CtripBaseSpider(BaseSpider):
         """
         sender = send or (lambda: requests.post(url, json=payload, timeout=self.timeout))
         response = self._request_with_retry(sender, url=url, method="POST",
-                                            on_status=on_status)
+                                            on_status=on_status, log_response=log_response)
         if response is None:
             return None
         try:
