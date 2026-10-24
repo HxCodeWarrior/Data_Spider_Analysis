@@ -46,37 +46,40 @@ pip install -e ".[dev]"           # 基础功能 + 测试依赖
 
 ### 命令行用法
 
-真正可执行的 CLI 是携程流水线模块本身：
+两个平台使用统一的参数名：名称参数为 `--sight`、`--city`，ID 参数为
+`--poi-id`、`--district-id`。
 
 ```bash
-# 已知携程地区 ID：完整流水线（列表 → 详情 → 评论）
-python -m lifelens.platforms.ctrip.pipeline --district-id 9 --city-name 上海 --list-pages 3 --max-comment-pages 50
+# 按景点名称
+python -m lifelens.platforms.ctrip.pipeline --sight "黄鹤楼"
 
-# 已知景点 POI ID：仅详情 + 评论
-python -m lifelens.platforms.ctrip.pipeline --poi-id 10568753 --poi-name 千岛湖
+# 按城市名称
+python -m lifelens.platforms.ctrip.pipeline --city "杭州" --list-pages 3
 
-# 只知道名字：关键词自动解析（景点名或地区名均可）
-python -m lifelens.platforms.ctrip.pipeline --keyword "黄鹤楼"
-python -m lifelens.platforms.ctrip.pipeline --keyword "杭州"
+# 按景点 POI ID
+python -m lifelens.platforms.ctrip.pipeline --poi-id 10568753
 
-# 自定义输出目录
-python -m lifelens.platforms.ctrip.pipeline --keyword "西湖" --output-dir ./out
+# 按地区 ID
+python -m lifelens.platforms.ctrip.pipeline --district-id 9 --list-pages 3
+
+# 去哪儿同样使用 --sight、--city、--poi-id
+python -m lifelens.platforms.qunar.pipeline --city "北京" --max-sights 10
 ```
 
-参数说明（`--keyword` / `--district-id` / `--poi-id` 三选一）：
+参数说明（`--sight` / `--city` / `--poi-id` / `--district-id` 四选一）：
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
-| `--keyword` | 景点名或地区名，自动解析 ID | `""` |
+| `--sight` | 景点名称，自动解析 POI ID | `""` |
+| `--city` | 城市名称，自动解析地区 ID | `""` |
+| `--poi-id` | 景点 POI ID | `None` |
 | `--district-id` | 携程地区 ID | — |
-| `--poi-id` | 景点 POI ID | `""` |
-| `--poi-name` | 景点名称（用于目录/文件命名） | `""` |
-| `--city-name` | 城市名（地区模式用于目录命名） | `""` |
 | `--list-pages` | 景点列表爬取页数 | `None`（不限制，自动爬取所有页） |
 | `--max-comment-pages` | 每个景点评论最大爬取页数 | `None`（不限制，爬取所有页） |
 | `--output-dir` | 输出根目录 | `data` |
 
-> 注：顶层入口 `python -m lifelens`（或安装后的 `lifelens` 命令）目前只是子命令路由占位（`ctrip-list` / `ctrip-detail` / `ctrip-comments` 尚未接入），请直接使用上面的模块入口。
+> 注：Qunar 评论接口暂不支持地区 ID 查询，因此 `--district-id` 仅适用于
+> Ctrip；Qunar 请使用 `--city`。
 
 ### 编程式用法
 
@@ -85,11 +88,11 @@ from lifelens.platforms.ctrip.pipeline import CtripPipeline
 
 pipeline = CtripPipeline(output_dir="data")
 
-# 推荐主入口：同一个 run() 支持指定景点、指定地区、关键词自动识别
-result = pipeline.run(poi_id="10568753", poi_name="千岛湖")
-result = pipeline.run(district_id=9, city_name="上海", list_pages=5, max_comment_pages=50)
-result = pipeline.run(keyword="杭州", list_pages=5, max_comment_pages=50)
-result = pipeline.run(keyword="黄鹤楼", max_comment_pages=50)
+# 统一主入口：名称用 sight / city，ID 用 poi_id / district_id
+result = pipeline.run(poi_id="10568753")
+result = pipeline.run(district_id=9, list_pages=5, max_comment_pages=50)
+result = pipeline.run(city="杭州", list_pages=5, max_comment_pages=50)
+result = pipeline.run(sight="黄鹤楼", max_comment_pages=50)
 print(result)
 ```
 
@@ -99,8 +102,8 @@ print(result)
 // 地区模式
 {"total": 20, "completed": 18, "failed": 2, "skipped": 0, "elapsed_seconds": 152.3}
 
-// 关键词模式：在上述字段外额外附带
-{"keyword": "杭州", "resolved_type": "district", "resolved_info": {...}}
+// 名称解析模式：在上述字段外额外附带
+{"city": "杭州", "resolved_type": "district", "resolved_info": {...}}
 
 // 景点模式
 {"total": 1, "completed": 1, "failed": 0, "skipped": 0,
@@ -115,9 +118,9 @@ print(result)
 
 | 方法 | 适用场景 | 关键参数 |
 |------|----------|----------|
-| `run()` | 推荐入口，自动识别景点 / 地区 / 关键词 | `keyword` / `district_id` / `poi_id` 三选一 |
-| `run_district()` | 已知携程地区 ID，爬该地区所有景点 | `district_id`, `city_name`, `list_pages`, `max_comment_pages` |
-| `run_sight()` | 已知景点 POI ID，仅详情 + 评论 | `poi_id`, `poi_name`, `max_comment_pages` |
+| `run()` | 统一入口，按景点、城市或 ID 选择任务 | `sight` / `city` / `poi_id` / `district_id` 四选一 |
+| `_run_district()` | 内部地区流水线 | `district_id`, `city`, `list_pages`, `max_comment_pages` |
+| `_run_sight()` | 内部单景点流水线 | `poi_id`, `sight`, `max_comment_pages` |
 
 ### 单模块使用
 
@@ -188,33 +191,46 @@ spider.crawl_multiple_pois([("10568753", "千岛湖"), ("77593", "黄鹤楼")], 
 
 ## 数据输出
 
-地区模式（`run_district()`，目录名取 `city_name`，为空时用 `district_id`）：
+统一目录结构为：
+
+```text
+data/<platform>/<province>/<city>/<sight>_<poi-id>/
+```
+
+省、市优先取平台字段；缺失时从详情地址解析。无法确定的行政区使用
+`Unknown`，不会猜测。
+
+地区任务（`_run_district()`）：
 
 ```
 data/
-└── 上海/
-    ├── sights.json                # 景点列表
-    ├── summary.json               # 运行结果汇总
-    ├── pipeline_progress.json     # 已完成景点 ID 列表
-    ├── details/                   # 景点详情（每景点一个 JSON）
-    │   ├── 10568753.json
-    │   └── 102088.json
-    └── comments/                  # 评论数据（每景点一个 CSV）
-        ├── 10568753_千岛湖秀水街.csv
-        ├── progress.json          # 评论断点进度
-        └── failed_pages.json      # 失败页面记录
+└── ctrip/
+    └── 浙江省/
+        └── 杭州市/
+            ├── sights.json
+            ├── summary.json
+            ├── pipeline_progress.json
+            └── 千岛湖_10568753/
+                ├── detail.json
+                ├── comments.csv
+                ├── comments_progress.json
+                ├── failed_pages.json
+                └── summary.json
 ```
 
-景点模式（`run_sight()`）：
+景点任务（`_run_sight()`）：
 
 ```
 data/
-└── poi_10568753/
-    ├── summary.json
-    ├── details/10568753.json
-    └── comments/
-        ├── 10568753_千岛湖.csv
-        └── progress.json
+└── qunar/
+    └── 北京市/
+        └── 北京市/
+            └── 故宫博物院_989946426/
+                ├── detail.json
+                ├── comments.csv
+                ├── comments_progress.json
+                ├── failed_pages.json
+                └── summary.json
 ```
 
 评论 CSV 采用 `utf-8-sig` 编码（Excel 可直接打开），字段依次为：
@@ -224,9 +240,21 @@ data/
 ## 断点续跑机制
 
 - `pipeline_progress.json`：仅当某景点**详情与评论都成功**时才写入。只成功一项的景点不会被标记完成，下次运行会重新尝试该景点。
-- `comments/progress.json`：按 `{poi_id: {last_page, total_pages, status}}` 记录每个景点的评论爬取进度，重跑时从断点页继续追加写入 CSV。
-- `comments/failed_pages.json`：记录 `{poi_id, page, error, timestamp}`，便于事后定位与补采。
+- `comments_progress.json`：位于景点目录，按 `{poi_id: {last_page, total_pages, status}}` 记录评论断点。
+- `failed_pages.json`：位于景点目录，记录 `{poi_id, page, error, timestamp}`，便于定位与补采。
 - 需要强制重新采集时，删除对应进度文件即可。
+
+日志按平台、组件和日期组织：
+
+```text
+logs/
+├── ctrip/
+│   ├── pipeline_2026-10-24.log
+│   └── comment_spider_2026-10-24.log
+└── qunar/
+    ├── pipeline_2026-10-24.log
+    └── comment_spider_2026-10-24.log
+```
 
 ## 测试
 
@@ -238,7 +266,7 @@ D:\Environments\Anaconda\envs\AI\python.exe -m pytest -q
 python -m pytest -q
 ```
 
-`pyproject.toml` 已配置 `pythonpath = ["src"]`，无需手动设置 `PYTHONPATH`。当前基线：**47 passed**。
+`pyproject.toml` 已配置 `pythonpath = ["src"]`，无需手动设置 `PYTHONPATH`。当前离线基线：**105 passed**。
 
 | 测试文件 | 覆盖内容 |
 |----------|----------|
