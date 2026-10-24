@@ -5,6 +5,19 @@ from typing import Dict, Optional
 
 
 @dataclass
+class GlobalConfig:
+    """全局配置"""
+    log_dir: str = "logs"
+    data_dir: str = "data"
+    default_timeout: int = 10
+    default_delay_range: tuple = (1, 3)
+
+
+# 单例
+global_config = GlobalConfig()
+
+
+@dataclass
 class CtripConfig:
     """携程平台配置"""
     # API 端点
@@ -48,18 +61,8 @@ class CtripConfig:
     comment_cid: str = "09031069112760102754"
 
 
-@dataclass
-class GlobalConfig:
-    """全局配置"""
-    log_dir: str = "logs"
-    data_dir: str = "data"
-    default_timeout: int = 10
-    default_delay_range: tuple = (1, 3)
-
-
 # 单例
 ctrip_config = CtripConfig()
-global_config = GlobalConfig()
 
 
 @dataclass
@@ -91,3 +94,41 @@ class MafengwoConfig:
 
 # 单例
 mafengwo_config = MafengwoConfig()
+
+
+@dataclass
+class QunarConfig:
+    """去哪儿平台配置
+
+    景点详情数据由两个服务端渲染页面组合而成：
+    - ``detail_url``: 触屏版景点详情页，提供名称 / 等级 / 评分 / 地址 / 票务等基础信息
+    - 内嵌于详情页“查看景点简介及开放时间”链接的 shark 活动页，提供开放时间 /
+      门市参考价 / 联系电话 / 景区介绍等扩展信息（URL 在详情页 HTML 中动态解析）
+    """
+
+    # API 端点
+    sight_suggest_url: str = "https://touch.piao.qunar.com/touch/sight/suggest.json"
+    sight_list_url: str = "https://touch.piao.qunar.com/touch/list.htm"
+    detail_url: str = "https://touch.piao.qunar.com/touch/detail.htm"
+    intro_host: str = "https://m.flight.qunar.com"
+    host_list_url: str = "https://touch.piao.qunar.com/touch/weekHotSales.htm"
+    comment_url: str = "https://touch.piao.qunar.com/touch/getCommentsAndTravelTips.htm"
+    comment_page_size: int = 10
+
+    # 请求头
+    headers: Dict = field(default_factory=lambda: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                      'AppleWebKit/537.36 (KHTML, like Gecko) '
+                      'Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Referer': 'https://touch.piao.qunar.com/',
+    })
+
+    # 请求参数
+    timeout: int = 15
+    delay_range: tuple = (1, 3)
+
+
+# 单例
+qunar_config = QunarConfig()
