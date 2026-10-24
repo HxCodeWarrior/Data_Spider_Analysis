@@ -48,16 +48,17 @@ class CtripAttractionScraper(CtripBaseSpider):
         self.request_optimizer.set_delay(log_response=False)
 
         req_start = time.time()
-        response_json = self._post_json(self.url, data, log_response=False)
+        response_json = self._post_json(
+            self.url, data, log_response=False, stage="SEARCH")
         self._last_elapsed = time.time() - req_start
         self._last_http_status = 200 if response_json else 0
         if not response_json or not response_json.get('result'):
-            self.logger.warning(f"第{page}页响应中未找到 result 字段")
+            self.logger.warning_stage(
+                "SEARCH", f"Search page unavailable | Page: {page} | Reason: Missing result")
             return []
 
         poi_list = response_json['result'].get('sightRecreationList', [])
         if not poi_list:
-            self.logger.info(f"第{page}页没有数据")
             return []
 
         attractions = []
@@ -106,9 +107,7 @@ class CtripAttractionScraper(CtripBaseSpider):
                 self.request_optimizer.set_delay(log_response=False)
             page += 1
 
-        elapsed = time.time() - start_time
-        self.logger.info(
-            f"  列表完成: {len(all_attractions)} 个景点 ({elapsed:.1f}s)")
+        self._last_total_elapsed = time.time() - start_time
         return all_attractions
 
     def get_attraction_by_id(self, district_id: int, attraction_id: str,
@@ -123,16 +122,20 @@ class CtripAttractionScraper(CtripBaseSpider):
         Returns:
             景点信息，未找到返回 None
         """
-        self.logger.info(f"查找景点，地区ID: {district_id}, 景点ID: {attraction_id}")
+        self.logger.info_stage(
+            "SEARCH", f"Finding attraction | District ID: {district_id} | POI ID: {attraction_id}")
         attractions = self.get_attractions_list(district_id, 1, count_per_page)
 
         for attraction in attractions:
             if attraction.get('id') == attraction_id or \
                attraction.get('poi_id') == attraction_id:
-                self.logger.info(f"找到景点: {attraction.get('name', 'Unknown')}")
+                self.logger.info_stage(
+                    "SEARCH", f"Attraction identified: {attraction.get('name', 'Unknown')}")
                 return attraction
 
-        self.logger.warning(f"在地区 {district_id} 中未找到 ID 为 {attraction_id} 的景点")
+        self.logger.warning_stage(
+            "SEARCH",
+            f"Attraction not found | District ID: {district_id} | POI ID: {attraction_id}")
         return None
 
     # ------------------------------------------------------------------ #
@@ -199,10 +202,8 @@ class CtripAttractionScraper(CtripBaseSpider):
                 'description': poi.get('description', ''),
                 'recommend_duration': poi.get('recommendDuration', ''),
             }
-            if basic_info.get('name'):
-                self.logger.debug(f"成功解析景点: {basic_info['name']}")
             return basic_info
         except Exception as e:
-            self.logger.log_error(
-                f"解析景点基本信息异常: {e}", "parse_poi_basic_info", "PARSING")
+            self.logger.error_stage(
+                "SEARCH", f"Attraction parsing failed | Reason: {type(e).__name__}: {e}")
             return None

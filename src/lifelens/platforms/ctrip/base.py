@@ -7,6 +7,7 @@ import requests
 
 from lifelens.config import ctrip_config
 from lifelens.core.base_spider import BaseSpider
+from lifelens.core.logger import SpiderLogger
 
 
 class CtripBaseSpider(BaseSpider):
@@ -17,6 +18,11 @@ class CtripBaseSpider(BaseSpider):
     """
 
     def __init__(self, logger=None, request_optimizer=None, timeout: Optional[int] = None):
+        class_name = self.__class__.__name__
+        logger = logger or SpiderLogger(
+            class_name if class_name.startswith("Ctrip") else f"Ctrip{class_name}",
+            "logs",
+        )
         super().__init__(
             logger=logger,
             request_optimizer=request_optimizer,
@@ -29,7 +35,8 @@ class CtripBaseSpider(BaseSpider):
 
     def _post_json(self, url: str, payload: dict, *,
                    send: Optional[Callable[[], requests.Response]] = None,
-                   on_status=None, log_response: bool = True) -> Optional[dict]:
+                   on_status=None, log_response: bool = True,
+                   stage: str = "DETAIL") -> Optional[dict]:
         """POST JSON 请求并返回解析后的响应字典；失败返回 None。
 
         Args:
@@ -40,11 +47,13 @@ class CtripBaseSpider(BaseSpider):
         """
         sender = send or (lambda: requests.post(url, json=payload, timeout=self.timeout))
         response = self._request_with_retry(sender, url=url, method="POST",
-                                            on_status=on_status, log_response=log_response)
+                                            on_status=on_status, log_response=log_response,
+                                            stage=stage)
         if response is None:
             return None
         try:
             return response.json()
         except (json.JSONDecodeError, ValueError) as e:
-            self.logger.log_error(f"JSON 解析异常: {e}", url, "JSON_PARSE")
+            self.logger.log_error(f"Invalid JSON response: {e}", url, "JSON_PARSE",
+                                  stage=stage)
             return None

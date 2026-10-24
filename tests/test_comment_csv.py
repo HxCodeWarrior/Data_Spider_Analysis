@@ -54,7 +54,7 @@ def _make_spider(tmp_path: Path):
 def test_csv_header_and_field_order(tmp_path):
     spider = _make_spider(tmp_path)
 
-    assert spider.crawl_comments("poi-1", "星海 广场", max_pages=2) is True
+    assert spider.crawl_comments("poi-1", "星海 广场", max_pages=2)["status"] == "SUCCESS"
 
     csv_path = tmp_path / "comments" / "poi-1_星海 广场.csv"
     assert csv_path.exists()

@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from unittest.mock import Mock
 
+from lifelens.core.storage_layout import sight_directory
 from lifelens.platforms.ctrip.pipeline import CtripPipeline
 from lifelens.platforms.ctrip.sight_comments import CtripCommentSpider
 
@@ -37,7 +38,7 @@ def test_comment_crawl_handles_keyboard_interrupt(tmp_path: Path):
     spider._get_page_comments = lambda poi_id, page: [_comment_record(f"c{page}")]
     spider._init_csv_file = lambda poi_id, poi_name: str(tmp_path / "comments" / "poi.csv")
 
-    assert spider.crawl_comments("poi-1", "测试", max_pages=2) is False
+    assert spider.crawl_comments("poi-1", "测试", max_pages=2)["status"] == "INTERRUPTED"
 
     progress = json.loads(
         (tmp_path / "comments" / "progress.json").read_text(encoding="utf-8"))
@@ -53,11 +54,15 @@ def test_pipeline_run_sight_handles_keyboard_interrupt(tmp_path: Path):
     pipeline.comment_spider.crawl_comments = Mock(side_effect=KeyboardInterrupt)
     pipeline.comment_spider.reset_session = Mock()
 
-    result = pipeline.run_sight("poi-1", poi_name="测试景点", max_comment_pages=1)
+    result = pipeline._run_sight(
+        "poi-1", sight="测试景点", max_comment_pages=1)
 
     assert result["interrupted"] is True
     assert result["details_success"] is True
     assert result["comments_success"] is False
+    sight_dir = sight_directory(
+        str(tmp_path / "data"), "ctrip", "Unknown", "Unknown",
+        "测试景点", "poi-1")
     summary = json.loads(
-        (tmp_path / "data" / "poi_poi-1" / "summary.json").read_text(encoding="utf-8"))
+        (tmp_path / sight_dir / "summary.json").read_text(encoding="utf-8"))
     assert summary["interrupted"] is True

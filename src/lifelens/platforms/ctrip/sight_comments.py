@@ -4,9 +4,8 @@ import csv
 import time
 import os
 import re
-import traceback
 from datetime import datetime
-from typing import Optional
+from typing import Dict, Optional
 
 from lifelens.core.logger import SpiderLogger
 from lifelens.core.request_optimizer import RequestOptimizer
@@ -32,6 +31,7 @@ class CtripCommentSpider(CtripBaseSpider):
 
         self.post_url = ctrip_config.comment_url
         self._session = None
+        self.comment_filename = None
 
         super().__init__(logger=logger, request_optimizer=request_optimizer)
 
@@ -42,8 +42,11 @@ class CtripCommentSpider(CtripBaseSpider):
         self._consecutive_430 = 0
         self._last_elapsed = 0.0
         self._last_status = 0
+        self._last_total_comments = 0
+        self._checkpoint_saved = False
+        self._checkpoint_failed = False
 
-    def fetch(self, poi_id: str, poi_name: str = "", max_pages: Optional[int] = None) -> bool:
+    def fetch(self, poi_id: str, poi_name: str = "", max_pages: Optional[int] = None) -> Dict:
         """统一抓取入口：爬取指定景点的评论。"""
         return self.crawl_comments(str(poi_id), poi_name, max_pages=max_pages)
 
@@ -65,8 +68,26 @@ class CtripCommentSpider(CtripBaseSpider):
         """保存断点续爬进度文件"""
         try:
             json_storage.save(checkpoint, self.checkpoint_file)
+            self._checkpoint_saved = True
+            return True
         except (OSError, TypeError) as e:
-            self.logger.error(f"保存断点文件失败: {e}")
+            self._checkpoint_failed = True
+            self.logger.error_stage(
+                "COMMENT", f"Checkpoint save failed | Reason: {type(e).__name__}: {e}")
+            return False
+
+    @property
+    def checkpoint_state(self) -> str:
+        if self._checkpoint_failed:
+            return "UNAVAILABLE"
+        if self._checkpoint_saved:
+            return "SAVED"
+        return "NOT REQUIRED"
+
+    def reset_checkpoint_status(self) -> None:
+        """Reset checkpoint state before a new pipeline task."""
+        self._checkpoint_saved = False
+        self._checkpoint_failed = False
 
     def _record_failed_page(self, poi_id: str, page: int, error: str):
         """记录失败页面到 failed_pages.json"""
@@ -83,7 +104,8 @@ class CtripCommentSpider(CtripBaseSpider):
         try:
             json_storage.save(failed, self.failed_pages_file)
         except (OSError, TypeError) as e:
-            self.logger.error(f"保存失败页面记录失败: {e}")
+            self.logger.error_stage(
+                "COMMENT", f"Failed-page record save failed | Reason: {type(e).__name__}: {e}")
 
     # ------------------------------------------------------------------ #
     # CSV 与字段处理
@@ -91,7 +113,8 @@ class CtripCommentSpider(CtripBaseSpider):
     def _init_csv_file(self, poi_id: str, poi_name: str):
         """初始化 CSV 文件并写入表头"""
         safe_name = "".join(c for c in poi_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
-        file_path = os.path.join(self.output_dir, f'{poi_id}_{safe_name}.csv')
+        filename = self.comment_filename or f'{poi_id}_{safe_name}.csv'
+        file_path = os.path.join(self.output_dir, filename)
 
         try:
             with open(file_path, 'w', newline='', encoding='utf-8-sig') as f:
@@ -102,10 +125,10 @@ class CtripCommentSpider(CtripBaseSpider):
                     '出行类型', '用户所在地', '游玩时长', '图片数量', '图片链接列表',
                     '景色评分', '趣味评分', '性价比评分', '推荐项目'
                 ])
-            self.logger.info(f"CSV文件已初始化: {file_path}")
             return file_path
         except Exception as e:
-            self.logger.error(f"初始化CSV文件失败: {e}")
+            self.logger.error_stage(
+                "COMMENT", f"Comment file initialization failed | Reason: {type(e).__name__}: {e}")
             return None
 
     def _clean_content(self, content):
@@ -159,11 +182,10 @@ class CtripCommentSpider(CtripBaseSpider):
     # 主流程
     # ------------------------------------------------------------------ #
     def crawl_comments(self, poi_id: str, poi_name: str,
-                       max_pages: Optional[int] = None) -> bool:
+                       max_pages: Optional[int] = None) -> Dict:
         """爬取指定景点的评论
 
-        返回 True 当且仅当本次执行结束时该景点的 checkpoint 状态为 completed，
-        即已成功处理到最后一页且过程中未发生请求失败或降级中断。
+        返回结构化结果，表示本次执行结束时该景点的评论抓取状态。
 
         ``max_pages`` 为 ``None`` 时不限制页数，按接口返回的实际总页数完整爬取；
         传入正整数时最多爬取该页数后结束。
@@ -174,40 +196,66 @@ class CtripCommentSpider(CtripBaseSpider):
             max_pages: 最大爬取页数；``None`` 表示不限制
 
         Returns:
-            bool: 是否已完整爬取完毕
+            dict: 评论抓取结果，``status`` 为 ``SUCCESS``、``FAILED``、``INTERRUPTED`` 或 ``SKIPPED``。
         """
         poi_id = str(poi_id)
         start_time = time.time()
+        self._last_total_comments = 0
+        comment_result = {
+            "poi_id": poi_id,
+            "poi_name": poi_name,
+            "status": "SUCCESS",
+            "comments": 0,
+            "pages_completed": 0,
+            "total_pages": 0,
+            "reason": "",
+            "interrupted": False,
+        }
 
         checkpoint = self._load_checkpoint()
         poi_checkpoint = checkpoint.get(poi_id, {})
         if poi_checkpoint.get('status') == 'completed':
-            self.logger.info(f"景点 {poi_name} (ID: {poi_id}) 已完成爬取，跳过")
-            return True
+            comment_result.update({
+                "status": "SKIPPED",
+                "comments": int(poi_checkpoint.get("current_index", 0)),
+                "pages_completed": int(poi_checkpoint.get("last_page", 0)),
+                "total_pages": int(poi_checkpoint.get("total_pages", 0)),
+                "reason": "Already completed",
+            })
+            self.logger.info_stage("COMMENT", "Comment crawling skipped | Reason: Already completed")
+            return self._finish_comment_result(
+                comment_result, False, start_time, comment_result["comments"],
+                comment_result["pages_completed"])
 
         prev_total_pages = poi_checkpoint.get('total_pages', 0)
         total_pages, first_page_comments = self._get_total_pages(poi_id)
+        comment_result["total_pages"] = int(total_pages)
+        first_page_request = float(self._last_elapsed or 0.0)
+        reported_total_for_log = int(self._last_total_comments or 0)
 
         # ---------- 无评论 / 请求失败分支 ----------
         if total_pages == 0:
             if first_page_comments is None:
-                self._record_failed_page(poi_id, 0, "无法获取评论总页数")
-                self.logger.warning(f"无法获取 {poi_name} 的评论页数")
-                return False
+                self._record_failed_page(poi_id, 0, "Unable to retrieve comment page count")
+                comment_result.update({"status": "FAILED", "reason": "Unable to retrieve comments"})
+                return self._finish_comment_result(comment_result, False, start_time, current_index=0, pages_completed=0)
 
             # 历史记录中存在页数但本次 API 返回无评论：判定为降级响应，不标记完成
             if prev_total_pages > 0:
-                self.logger.warning(
-                    f"景点 {poi_name} 本次 API 返回无评论，但历史记录显示有 "
-                    f"{prev_total_pages} 页；判定为降级响应，保留断点待下次重试")
-                self._record_failed_page(poi_id, 0, "API 返回无评论但历史存在数据")
-                return False
+                self.logger.warning_stage(
+                    "COMMENT",
+                    f"Unexpected empty result | Previous pages: {prev_total_pages} | "
+                    "Action: Preserve checkpoint")
+                self._record_failed_page(
+                    poi_id, 0, "API returned no comments but checkpoint has pages")
+                comment_result.update({"status": "FAILED", "reason": "Unexpected empty result"})
+                return self._finish_comment_result(comment_result, False, start_time, current_index=0, pages_completed=0)
 
             # 景点确实无评论：创建空文件并标记完成
             file_path = self._init_csv_file(poi_id, poi_name)
             if not file_path:
-                self.logger.error(f"无法为景点 {poi_name} 创建文件")
-                return False
+                comment_result.update({"status": "FAILED", "reason": "Unable to create comment file"})
+                return self._finish_comment_result(comment_result, False, start_time, current_index=0, pages_completed=0)
 
             checkpoint[poi_id] = {
                 'last_page': 0,
@@ -216,19 +264,22 @@ class CtripCommentSpider(CtripBaseSpider):
                 'status': 'completed'
             }
             self._save_checkpoint(checkpoint)
-            self.logger.info(f"  评论无数据, 标记为完成")
-            return True
+            comment_result.update({"status": "SUCCESS", "comments": 0, "pages_completed": 0})
+            self.logger.info_stage("COMMENT", "No comments available")
+            return self._finish_comment_result(comment_result, True, start_time, current_index=0, pages_completed=0)
 
         # 本次 API 返回页数低于历史值：判定为降级响应，沿用历史页数继续
         if prev_total_pages > total_pages:
-            self.logger.warning(
-                f"景点 {poi_name} 本次 API 返回总页数 ({total_pages}) 低于历史记录 "
-                f"({prev_total_pages})，判定为降级响应，沿用历史值 {prev_total_pages} 页")
+            self.logger.warning_stage(
+                "COMMENT",
+                f"Page count decreased | Previous: {prev_total_pages} | "
+                f"Current: {total_pages} | Action: Use previous page count")
             total_pages = prev_total_pages
+            comment_result["total_pages"] = int(total_pages)
 
-        # 仅在显式传入正整数上限时截断页数；None 表示按实际总页数完整爬取
+        page_limit = total_pages
         if max_pages is not None:
-            total_pages = min(total_pages, max_pages)
+            page_limit = min(total_pages, max_pages)
 
         # ---------- 续爬起点 ----------
         start_page = poi_checkpoint.get('last_page', 0) + 1
@@ -236,105 +287,184 @@ class CtripCommentSpider(CtripBaseSpider):
 
         # 历史断点超出当前终点：历史记录已失真，丢弃后重新爬取
         if poi_checkpoint and start_page > total_pages:
-            self.logger.warning(
-                f"景点 {poi_name} 历史断点 last_page={poi_checkpoint.get('last_page')} "
-                f"超出当前总页数 {total_pages}，历史记录失效，重新爬取")
+            self.logger.warning_stage(
+                "COMMENT",
+                f"Checkpoint page out of range | Page: {poi_checkpoint.get('last_page')} | "
+                f"Total pages: {total_pages} | Action: Restart from page 1")
             checkpoint.pop(poi_id, None)
             self._save_checkpoint(checkpoint)
             start_page = 1
             current_index = 0
             file_path = self._init_csv_file(poi_id, poi_name)
             if not file_path:
-                self.logger.error(f"无法为景点 {poi_name} 创建文件")
-                return False
+                comment_result.update({"status": "FAILED", "reason": "Unable to create comment file"})
+                return self._finish_comment_result(comment_result, False, start_time, current_index=0, pages_completed=0)
         elif start_page > 1:
-            self.logger.info(f"断点续爬: 从第 {start_page} 页开始，已有 {current_index} 条评论")
+            self.logger.info_stage(
+                "COMMENT",
+                f"Resuming from checkpoint | Page: {start_page}/{total_pages} | "
+                f"Comments: {current_index:,}")
             safe_name = "".join(c for c in poi_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
-            file_path = os.path.join(self.output_dir, f'{poi_id}_{safe_name}.csv')
+            filename = self.comment_filename or f'{poi_id}_{safe_name}.csv'
+            file_path = os.path.join(self.output_dir, filename)
             if not os.path.exists(file_path):
-                self.logger.warning("断点续爬: CSV 文件不存在，从头开始")
+                self.logger.warning_stage(
+                    "COMMENT", "Checkpoint comment file missing | Action: Restart from page 1")
                 file_path = self._init_csv_file(poi_id, poi_name)
                 if not file_path:
-                    return False
+                    comment_result.update({"status": "FAILED", "reason": "Unable to create comment file"})
+                    return self._finish_comment_result(comment_result, False, start_time, current_index=0, pages_completed=0)
                 start_page = 1
                 current_index = 0
         else:
             file_path = self._init_csv_file(poi_id, poi_name)
             if not file_path:
-                self.logger.error(f"无法为景点 {poi_name} 创建文件")
-                return False
+                comment_result.update({"status": "FAILED", "reason": "Unable to create comment file"})
+                return self._finish_comment_result(comment_result, False, start_time, current_index=0, pages_completed=0)
 
-        success_count = 0
+        self.logger.info_stage("COMMENT", "Starting comment crawling")
+        self.logger.info_stage(
+            "COMMENT",
+            f"Expected comments: {reported_total_for_log:,} | Total pages: {comment_result['total_pages']}"
+        )
+
+        completed_pages = 0
         interrupted = False
+        request_durations = [first_page_request] if first_page_request > 0 else []
+        delay_durations = []
         try:
-            for page in range(start_page, total_pages + 1):
+            for page in range(start_page, page_limit + 1):
+                delay_time = 0.0
 
                 # 首屏数据复用 _get_total_pages 的请求结果，避免重复请求
                 if page == 1 and start_page == 1 and first_page_comments is not None:
                     comments_data = first_page_comments
+                    request_duration = first_page_request
                 else:
                     comments_data = self._get_page_comments(poi_id, page)
+                    request_duration = float(self._last_elapsed or 0.0)
+                    if request_duration > 0:
+                        request_durations.append(request_duration)
 
                 # 请求或响应结构异常：立即中止并保留断点，下次从此页续爬
                 if comments_data is None:
-                    self.logger.warning(
-                        f"第 {page} 页数据获取失败，中止本次爬取并保留断点待下次续爬")
-                    self._record_failed_page(poi_id, page, "数据获取失败")
+                    self._record_failed_page(poi_id, page, "Comment page unavailable")
+                    comment_result.update({
+                        "status": "FAILED",
+                        "comments": current_index,
+                        "pages_completed": completed_pages,
+                        "reason": "Comment page unavailable",
+                    })
                     break
 
                 # 非末页返回空数据：疑似降级响应，中止本次爬取
                 if not comments_data and page < total_pages:
-                    self.logger.warning(
-                        f"第 {page}/{total_pages} 页返回空数据（非末页），"
-                        f"疑似降级响应，中止本次爬取")
-                    self._record_failed_page(poi_id, page, "非末页返回空数据")
+                    self._record_failed_page(poi_id, page, "Unexpected empty page")
+                    comment_result.update({
+                        "status": "FAILED",
+                        "comments": current_index,
+                        "pages_completed": completed_pages,
+                        "reason": "Unexpected empty page",
+                    })
                     break
 
                 # 末页返回空数据属于合法结束，正常落盘（写入 0 行，序号不变）
-                current_index = self._save_comments(
+                saved_index = self._save_comments(
                     comments_data, poi_id, poi_name, current_index, file_path)
-                success_count += 1
+                if saved_index is None:
+                    comment_result.update({
+                        "status": "FAILED",
+                        "comments": current_index,
+                        "pages_completed": completed_pages,
+                        "reason": "Comment persistence failed",
+                    })
+                    break
+                current_index = saved_index
+                completed_pages += 1
 
                 # 仅当到达最后一页且无中断时，才置为 completed
-                is_last_page = (page >= total_pages)
+                is_last_page = (page >= page_limit)
                 checkpoint[poi_id] = {
                     'last_page': page,
-                    'total_pages': total_pages,
+                    'total_pages': page_limit,
                     'current_index': current_index,
                     'status': 'completed' if is_last_page else 'in_progress'
                 }
                 self._save_checkpoint(checkpoint)
 
-                # 延迟（末页无需延迟）；抑制 set_delay 的 log_request，
-                # 延迟信息合并到下方页面日志中输出。
-                sleep_desc = ""
                 if page < total_pages:
-                    sleep_num, delay_time = self.request_optimizer.set_delay(
-                        log_response=False)
-                    sleep_desc = f" | sleep #{sleep_num} | delay={delay_time:.2f}s"
+                    delay_result = self.request_optimizer.set_delay(log_response=False)
+                    if isinstance(delay_result, (tuple, list)) and len(delay_result) >= 2:
+                        delay_time = delay_result[1]
+                    else:
+                        delay_time = getattr(self.request_optimizer, "last_delay", 0.0)
+                    delay_durations.append(float(delay_time or 0.0))
 
-                self.logger.info(
-                    f"  page {page}/{total_pages} | got={len(comments_data)} | "
-                    f"total={current_index} | req={self._last_elapsed:.2f}s{sleep_desc}")
+                self.logger.log_comment_progress(page, total_pages, len(comments_data),
+                                                 current_index, request_duration,
+                                                 delay_time)
         except KeyboardInterrupt:
             interrupted = True
-            self.logger.warning(
-                f"  Ctrl+C 停止: {current_index}条/"
-                f"{checkpoint.get(poi_id, {}).get('last_page', 0)}页，"
-                f"保留断点待下次续爬")
+            comment_result.update({
+                "status": "INTERRUPTED",
+                "comments": current_index,
+                "pages_completed": int(checkpoint.get(poi_id, {}).get("last_page", 0)),
+                "reason": "Interrupted by user",
+                "interrupted": True,
+            })
+            self.logger.warning_stage(
+                "COMMENT",
+                f"Crawling interrupted | Comments: {comment_result['comments']:,} | Pages: {comment_result['pages_completed']}/{comment_result['total_pages']}"
+            )
+            if self.checkpoint_state == "SAVED":
+                self.logger.info_stage("COMMENT", "Checkpoint saved successfully")
 
-        end_time = time.time()
-        final_status = checkpoint.get(poi_id, {}).get('status', 'in_progress')
-        if final_status == 'completed':
-            self.logger.info(
-                f"  评论完成: {current_index}条/{total_pages}页 "
-                f"({end_time - start_time:.1f}s)")
+        completed = checkpoint.get(poi_id, {}).get('status', 'in_progress') == 'completed'
+        last_page = int(checkpoint.get(poi_id, {}).get('last_page', completed_pages or 0))
+        return self._finish_comment_result(
+            comment_result,
+            completed,
+            start_time,
+            current_index,
+            last_page,
+            request_durations=request_durations,
+            delay_durations=delay_durations,
+        )
+
+    def _finish_comment_result(self, comment_result: Dict, completed: bool,
+                               start_time: float, current_index: int,
+                               pages_completed: int, reason: str = "",
+                               request_durations=None,
+                               delay_durations=None) -> Dict:
+        """Normalize final Ctrip comment counters and logging."""
+        comment_result["comments"] = int(current_index or 0)
+        comment_result["pages_completed"] = int(pages_completed or 0)
+        comment_result["elapsed_seconds"] = round(time.time() - start_time, 2)
+        status = str(comment_result.get("status", "")).upper()
+
+        if status == "SKIPPED":
+            return comment_result
+        if completed:
+            comment_result["status"] = "SUCCESS"
+            if comment_result["total_pages"]:
+                self.logger.info_stage(
+                    "COMMENT",
+                    f"Crawling completed | Comments: {comment_result['comments']:,} | "
+                    f"Pages: {comment_result['pages_completed']}/{comment_result['total_pages']}"
+                )
         else:
-            last_page = checkpoint.get(poi_id, {}).get('last_page', 0)
-            self.logger.info(
-                f"  评论中断: {current_index}条/{last_page}页 "
-                f"({'Ctrl+C 停止' if interrupted else f'page {success_count + start_page} 失败'})")
-        return final_status == 'completed'
+            if comment_result.get("status") not in {"INTERRUPTED", "FAILED"}:
+                comment_result["status"] = "FAILED"
+            if reason and not comment_result.get("reason"):
+                comment_result["reason"] = reason
+            if comment_result["status"] != "INTERRUPTED":
+                self.logger.error_stage(
+                    "COMMENT",
+                    f"Crawling stopped | Comments: {comment_result['comments']:,} | Pages: {comment_result['pages_completed']}/{comment_result.get('total_pages', 0)}"
+                    f" | Reason: {comment_result.get('reason') or 'Unknown error'}"
+                )
+        self.logger.log_comment_averages(request_durations, delay_durations)
+        return comment_result
 
     def crawl_multiple_pois(self, poi_list: list, max_pages: Optional[int] = None):
         """批量爬取多个景点的评论
@@ -356,11 +486,13 @@ class CtripCommentSpider(CtripBaseSpider):
         consecutive_failures = 0
 
         for i, (poi_id, poi_name) in enumerate(poi_list, 1):
-            self.logger.info(f"  [{i}/{total_pois}] {poi_name}")
+            self.logger.info_stage(
+                "SIGHT", f"[{i}/{total_pois}] {poi_name} | POI ID: {poi_id}")
 
             self.reset_session()
 
-            success = self.crawl_comments(poi_id, poi_name, max_pages)
+            comment_result = self.crawl_comments(poi_id, poi_name, max_pages)
+            success = comment_result.get("status") == "SUCCESS"
             results[f"{poi_name}({poi_id})"] = success
 
             if success:
@@ -370,14 +502,16 @@ class CtripCommentSpider(CtripBaseSpider):
                 risk_level = max(self._consecutive_430, consecutive_failures)
                 if risk_level >= 2:
                     backoff = min(180, 10 * (2 ** min(risk_level - 1, 4)))
-                    self.logger.warning(
-                        f"连续失败 {consecutive_failures} 个景点，"
-                        f"连续 HTTP 430 次数 {self._consecutive_430}，"
-                        f"退避 {backoff}s 并刷新会话")
+                    self.logger.warning_stage(
+                        "COMMENT",
+                        f"Consecutive failures: {consecutive_failures} | "
+                        f"HTTP 430 count: {self._consecutive_430} | "
+                        f"Backoff: {backoff}s | Action: Refresh session")
                     try:
                         time.sleep(backoff)
                     except KeyboardInterrupt:
-                        self.logger.warning("Ctrl+C 停止: 保留已保存数据")
+                        self.logger.warning_stage(
+                            "COMMENT", "Crawling interrupted | Action: Preserve saved data")
                         break
                     self.reset_session()
                     self._consecutive_430 = 0
@@ -386,9 +520,10 @@ class CtripCommentSpider(CtripBaseSpider):
 
         end_time = time.time()
         success_n = sum(1 for v in results.values() if v)
-        self.logger.info(
-            f"  批量完成: {success_n}/{total_pois} 成功 "
-            f"({end_time - start_time:.1f}s)")
+        self.logger.info_stage(
+            "SUMMARY",
+            f"Batch comment crawling completed | Successful: {success_n:,} | "
+            f"Total: {total_pois:,} | Duration: {self.logger.format_elapsed(end_time - start_time)}")
 
         return results
 
@@ -404,28 +539,32 @@ class CtripCommentSpider(CtripBaseSpider):
                 - (0, []):   景点确实无评论
                 - (N, [...]): 正常分页结果
         """
+        self._last_total_comments = 0
         data = self._make_request(poi_id, 1)
         if not data or 'result' not in data:
-            self.logger.warning("无法获取总页数")
+            self.logger.warning_stage(
+                "COMMENT", "Comment page count unavailable | Action: Skip attraction comments")
             return 0, None
 
         try:
             total_count = int(data['result']['totalCount'])
+            self._last_total_comments = total_count
             items = data['result'].get('items', [])
 
             if total_count > 0 and not items:
-                self.logger.warning(
-                    f"POI {poi_id} 响应 totalCount={total_count} 但 items 为空，"
-                    f"判定为降级响应，视为获取失败")
+                self.logger.warning_stage(
+                    "COMMENT",
+                    f"Degraded comment response | Expected comments: {total_count:,} | "
+                    "Comments received: 0")
                 return 0, None
 
             page_size = ctrip_config.comment_page_size
             total_pages = (total_count + page_size - 1) // page_size
-            self.logger.info(f"总评论数: {total_count}, 总页数: {total_pages}")
             first_page_comments = self._parse_comment_items(items, poi_id, 1)
             return total_pages, first_page_comments
         except (KeyError, TypeError, ValueError) as e:
-            self.logger.error(f"解析总页数时出错: {e}")
+            self.logger.error_stage(
+                "COMMENT", f"Comment page count parsing failed | Reason: {type(e).__name__}: {e}")
             return 0, None
 
     def _make_request(self, poi_id: str, page_index: int = 1):
@@ -468,24 +607,24 @@ class CtripCommentSpider(CtripBaseSpider):
             nonlocal saw_430
             if response.status_code == 430:
                 saw_430 = True
-                self.logger.warning(f"HTTP 430 (风控), 刷新会话, retry {attempt}/3")
                 return 5 * attempt
             return None
 
         response = self._request_with_retry(
             send, url=self.post_url, method="POST", on_status=on_status,
-            log_response=False)
+            log_response=False, stage="COMMENT")
         if response is None:
             if saw_430:
                 self._consecutive_430 += 1
             return None
         self._consecutive_430 = 0
-        self._last_elapsed = response.elapsed.total_seconds()
         self._last_status = response.status_code
         try:
             return response.json()
         except (json.JSONDecodeError, ValueError) as e:
-            self.logger.log_error(f"JSON 解析异常: {e}", self.post_url, "JSON_PARSE")
+            self.logger.log_error(
+                f"Invalid JSON response: {e}", self.post_url, "JSON_PARSE",
+                stage="COMMENT")
             return None
 
     def _get_session(self):
@@ -497,10 +636,15 @@ class CtripCommentSpider(CtripBaseSpider):
                               "AppleWebKit/605.1.15 (KHTML, like Gecko) "
                               "Version/16.0 Mobile/15E148 Safari/604.1",
             })
+            warmup_start = time.perf_counter()
             try:
                 sess.get("https://m.ctrip.com/", timeout=10)
             except Exception as e:
-                self.logger.warning(f"预热会话获取 cookie 失败: {e}")
+                self.logger.warning_stage(
+                    "COMMENT", f"Session warm-up failed | Reason: {type(e).__name__}: {e}")
+            finally:
+                self.logger.record_request_duration(
+                    time.perf_counter() - warmup_start)
             self._session = sess
         return self._session
 
@@ -571,13 +715,14 @@ class CtripCommentSpider(CtripBaseSpider):
                 })
             return comments
         except Exception as e:
-            self.logger.log_error(
-                f"解析评论数据时出错: {e}", f"POI_ID: {poi_id}, Page: {page}", "PARSING")
-            self.logger.error(traceback.format_exc())
+            self.logger.error_stage(
+                "COMMENT",
+                f"Comment parsing failed | POI ID: {poi_id} | Page: {page} | "
+                f"Reason: {type(e).__name__}: {e}")
             return []
 
     def _save_comments(self, comments: list, poi_id: str, poi_name: str,
-                       start_index: int, file_path: str) -> int:
+                       start_index: int, file_path: str) -> Optional[int]:
         """将评论追加保存到指定 CSV 文件"""
         try:
             with open(file_path, 'a', newline='', encoding='utf-8-sig') as f:
@@ -598,5 +743,6 @@ class CtripCommentSpider(CtripBaseSpider):
                     current_index += 1
             return current_index
         except Exception as e:
-            self.logger.log_error(f"保存评论到CSV失败: {e}", file_path, "FILE_WRITE")
-            return start_index
+            self.logger.error_stage(
+                "COMMENT", f"Comment persistence failed | Reason: {type(e).__name__}: {e}")
+            return None

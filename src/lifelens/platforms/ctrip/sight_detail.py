@@ -41,18 +41,24 @@ class AttractionDetailFetcher(CtripBaseSpider):
         request_data = self._build_request_data(poi_id)
         self.request_optimizer.set_delay(log_response=False)
 
-        response_json = self._post_json(self.detail_url, request_data)
+        response_json = self._post_json(
+            self.detail_url, request_data, log_response=False, stage="DETAIL")
         if response_json is None:
-            return self._create_error_result("请求失败")
+            return self._create_error_result(
+                "请求失败", "Request failed")
 
         if 'error' in response_json or 'templateList' not in response_json:
             self.logger.log_error(
-                "API返回错误或缺少必要字段", self.detail_url, "API_ERROR")
-            return self._create_error_result("API返回错误或缺少必要字段")
+                "API response missing required detail fields", self.detail_url,
+                "API_ERROR", stage="DETAIL")
+            return self._create_error_result(
+                "API返回错误或缺少必要字段",
+                "API response missing required detail fields")
 
         result = self._parse_core_data(response_json)
         result['success'] = True
         result['error_message'] = ''
+        result['error_reason'] = ''
         return result
 
     def get_formatted_detail(self, poi_id) -> str:
@@ -67,7 +73,10 @@ class AttractionDetailFetcher(CtripBaseSpider):
         detail = self.get_detail(poi_id)
         if not detail['success']:
             error_msg = f"获取景点详情失败: {detail['error_message']}"
-            self.logger.error(error_msg)
+            self.logger.error_stage(
+                "DETAIL",
+                f"Attraction detail retrieval failed | "
+                f"Reason: {detail.get('error_reason') or detail['error_message']}")
             return error_msg
 
         lines = []
@@ -97,20 +106,24 @@ class AttractionDetailFetcher(CtripBaseSpider):
     # ------------------------------------------------------------------ #
     # 内部方法
     # ------------------------------------------------------------------ #
-    def _create_error_result(self, error_message: str) -> Dict:
+    def _create_error_result(self, error_message: str, error_reason: str = "") -> Dict:
         """创建错误结果字典。"""
         return {
             'success': False,
             'poi_id': '',
             'poi_name': '',
             'english_name': '',
+            'province_name': '',
+            'city_name': '',
             'district': '',
+            'address': '',
             'coordinates': {},
             'telephone': [],
             'ticket_price': '',
             'description': '',
             'traffic': [],
             'error_message': error_message,
+            'error_reason': error_reason or error_message,
         }
 
     def _build_request_data(self, poi_id) -> Dict:
@@ -127,7 +140,10 @@ class AttractionDetailFetcher(CtripBaseSpider):
             'poi_id': '',
             'poi_name': '',
             'english_name': '',
+            'province_name': '',
+            'city_name': '',
             'district': '',
+            'address': '',
             'coordinates': {},
             'telephone': [],
             'ticket_price': '',
@@ -157,7 +173,10 @@ class AttractionDetailFetcher(CtripBaseSpider):
             result['poi_id'] = basic.get('poiId', '')
             result['poi_name'] = basic.get('poiName', '')
             result['english_name'] = basic.get('poiEName', '')
+            result['province_name'] = basic.get('provinceName', '')
+            result['city_name'] = basic.get('cityName', '')
             result['district'] = basic.get('districtName', '')
+            result['address'] = basic.get('address', '')
             coord = basic.get('coordinate', {})
             result['coordinates'] = {
                 'latitude': coord.get('latitude'),
@@ -193,7 +212,8 @@ class AttractionDetailFetcher(CtripBaseSpider):
                 clean = ' '.join(soup.get_text().split())
                 result['description'] = clean.strip()
             except Exception as e:
-                self.logger.warning(f"HTML解析失败，使用备用方法: {e}")
+                self.logger.warning_stage(
+                    "DETAIL", f"HTML parsing fallback used | Reason: {type(e).__name__}: {e}")
                 clean = re.sub(r'<[^>]+>', '', desc)
                 result['description'] = ' '.join(clean.split()).strip()
 

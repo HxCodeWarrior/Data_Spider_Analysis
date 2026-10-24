@@ -20,7 +20,7 @@ poi_id 和 district_id，无需手动填充。
 
     # 自动判断关键词类型
     info = locator.locate("黄鹤楼")
-    # info["type"] == "sight"  → 用 poi_id 调 pipeline.run_sight()
+    # info["type"] == "sight"  → 用 poi_id 调 pipeline.run()
     # info["type"] == "district" → 用 district_id 调 pipeline.run_district()
 """
 
@@ -47,7 +47,7 @@ class SightLocator(CtripBaseSpider):
 
     def __init__(self, delay_range: tuple = (1, 3), logger: Optional[SpiderLogger] = None,
                  request_optimizer: Optional[RequestOptimizer] = None):
-        logger = logger or SpiderLogger("SightLocator", "logs")
+        logger = logger or SpiderLogger("CtripSightLocator", "logs")
         super().__init__(
             logger=logger,
             request_optimizer=request_optimizer or RequestOptimizer(
@@ -55,6 +55,7 @@ class SightLocator(CtripBaseSpider):
         )
         self.delay_range = delay_range
         self.search_url = ctrip_config.sight_search_url
+        self.last_result_count = 0
 
     # ------------------------------------------------------------------ #
     # 公开 API
@@ -74,11 +75,11 @@ class SightLocator(CtripBaseSpider):
         Returns:
             搜索结果列表，空列表表示无结果或请求失败
         """
-        self.logger.info(f"开始搜索关键词: {keyword}")
         data = self._send_search_request(keyword, pagesize)
         if data is None:
+            self.last_result_count = 0
             return []
-        self.logger.info(f"搜索返回 {len(data)} 条结果")
+        self.last_result_count = len(data)
         return data
 
     def locate_district(self, keyword: str) -> Optional[Dict]:
@@ -141,7 +142,8 @@ class SightLocator(CtripBaseSpider):
         results = self.search(keyword)
         info = self._parse_first(results)
         if info is None:
-            self.logger.warning(f"未能从搜索结果中定位到景点或地区 ID，关键词: {keyword}")
+            self.logger.warning_stage(
+                "SEARCH", f"Unable to identify an attraction or district | Keyword: {keyword}")
             return None
         info["keyword"] = keyword
         return info
@@ -175,10 +177,8 @@ class SightLocator(CtripBaseSpider):
                 "city_id": item.get("cityId", 0),
                 "city_name": item.get("cityName", ""),
             }
-            self.logger.info(
-                f"解析到地区: {info['district_name']} (district_id={info['district_id']})")
             return info
-        self.logger.warning("搜索结果中未找到 district 类型记录")
+        self.logger.warning_stage("SEARCH", "No district result found")
         return None
 
     def _parse_sight(self, results: List[Dict]) -> Optional[Dict]:
@@ -199,11 +199,8 @@ class SightLocator(CtripBaseSpider):
                 "city_id": item.get("cityId", 0),
                 "city_name": item.get("cityName", ""),
             }
-            self.logger.info(
-                f"解析到景点: {info['sight_name']} (poi_id={info['poi_id']}, "
-                f"district_id={info['district_id']})")
             return info
-        self.logger.warning("搜索结果中未找到 sight 类型记录")
+        self.logger.warning_stage("SEARCH", "No attraction result found")
         return None
 
     # ------------------------------------------------------------------ #
@@ -221,13 +218,14 @@ class SightLocator(CtripBaseSpider):
         }
 
         self.request_optimizer.set_delay(log_response=False)
-        body = self._post_json(self.search_url, payload)
+        body = self._post_json(
+            self.search_url, payload, log_response=False, stage="SEARCH")
         if body is None:
             return None
 
         data = body.get("data")
         if not isinstance(data, list):
-            self.logger.warning("响应中未找到有效的 data 列表")
+            self.logger.warning_stage("SEARCH", "Invalid search response | Reason: Missing result list")
             return None
         return data
 
@@ -252,7 +250,10 @@ if __name__ == "__main__":
 
     if result:
         print(json.dumps(result, ensure_ascii=False, indent=2))
-        print(f"\n→ 如需自动爬取，请使用: python -m lifelens.platforms.ctrip.pipeline --keyword {args.keyword}")
+        flag = "--city" if result.get("type") == "district" else "--sight"
+        print(
+            "\n→ 如需自动爬取，请使用: "
+            f"python -m lifelens.platforms.ctrip.pipeline {flag} {args.keyword}")
     else:
         print(f"未找到与 '{args.keyword}' 匹配的结果")
         exit(1)
