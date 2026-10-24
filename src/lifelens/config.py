@@ -1,7 +1,7 @@
 """集中配置：API 端点、请求头、通用参数"""
 
 from dataclasses import dataclass, field
-from typing import Dict
+from typing import Dict, Optional
 
 
 @dataclass
@@ -60,3 +60,34 @@ class GlobalConfig:
 # 单例
 ctrip_config = CtripConfig()
 global_config = GlobalConfig()
+
+
+@dataclass
+class MafengwoConfig:
+    """马蜂窝平台配置"""
+    # 页面端点
+    base_url: str = "https://www.mafengwo.cn"
+    search_url: str = "https://www.mafengwo.cn/search/q.php"
+    poi_detail_url: str = "https://www.mafengwo.cn/poi/{poi_id}.html"
+    gonglve_url: str = "https://www.mafengwo.cn/jd/{mdd_id}/gonglve.html"
+
+    # 请求头
+    headers: Dict = field(default_factory=lambda: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                      'AppleWebKit/537.36 (KHTML, like Gecko) '
+                      'Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Referer': 'https://www.mafengwo.cn/',
+    })
+
+    # 可选 Cookie 文件，JSON 格式: {"cookie_name": "cookie_value"}
+    cookie_file: Optional[str] = None
+
+    # 请求参数
+    timeout: int = 15
+    delay_range: tuple = (1, 3)
+
+
+# 单例
+mafengwo_config = MafengwoConfig()
